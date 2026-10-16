@@ -285,7 +285,7 @@
 .doc-pager span { font-size: 12.5px; color: var(--ink-3); }
 .docs-mobile-nav { display: none; }
 @media (max-width: 900px) {
-  .docs { grid-template-columns: 1fr; gap: 24px; padding-top: 24px; }
+  .docs { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-top: 24px; }
   .docs-nav { display: none; }
   .docs-mobile-nav { display: block; }
 }
