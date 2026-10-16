@@ -41,7 +41,7 @@ export default function Payments() {
     <>
       <PageHeader
         title="Payments"
-        sub="STK Push collections. Money settles directly to your Till or Paybill."
+        sub="STK Push collections."
         actions={
           <>
             <button

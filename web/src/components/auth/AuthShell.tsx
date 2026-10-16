@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Logo } from "@/components/Logo";
+import { ThemeSwitch } from "@/components/ThemeSwitch";
 import { SITE } from "@/lib/site";
 
 export function AuthShell({ children, side, topRight }: { children: ReactNode; side: ReactNode; topRight?: ReactNode }) {
@@ -13,9 +14,9 @@ export function AuthShell({ children, side, topRight }: { children: ReactNode; s
         </div>
         <div className="auth-form-wrap">{children}</div>
         <div className="auth-foot">
-          <span>© 2026 SwiftPal</span>
+          <ThemeSwitch />
           <span>
-            Need help? <a className="link" href={`mailto:${SITE.supportEmail}`}>{SITE.supportEmail}</a>
+            Help: <a className="link" href={`mailto:${SITE.supportEmail}`}>{SITE.supportEmail}</a>
           </span>
         </div>
       </div>
@@ -26,18 +27,16 @@ export function AuthShell({ children, side, topRight }: { children: ReactNode; s
 
 export function NextSteps() {
   const items = [
-    ["Verify your email", "A 6-digit code, so we know where to send receipts and alerts."],
-    ["Tell us about your business", "Four quick questions. No documents needed yet."],
-    ["Add your Till or Paybill", "We confirm it with a KES 1 prompt to your own phone."],
-    ["Copy your keys", "Sandbox keys work immediately, with test prompts and real webhooks."],
+    ["Verify your email", "6-digit code."],
+    ["Business details", "Four questions. No documents yet."],
+    ["Till or Paybill", "Verified with a KES 1 prompt to your phone."],
+    ["API keys", "Sandbox key works immediately."],
   ];
   return (
     <>
       <div>
-        <div className="eyebrow" style={{ color: "#6fbf9b" }}>
-          About three minutes
-        </div>
-        <h2 style={{ marginTop: 12 }}>What happens after you sign up</h2>
+        <div className="eyebrow">About three minutes</div>
+        <h2 style={{ marginTop: 12 }}>Setup</h2>
       </div>
       <ol className="auth-list">
         {items.map(([t, d], i) => (
@@ -51,11 +50,10 @@ export function NextSteps() {
         ))}
       </ol>
       <p className="muted" style={{ fontSize: 13 }}>
-        Already integrated with Daraja? Read the{" "}
-        <Link href="/docs/quickstart" style={{ color: "#c9ecd9", textDecoration: "underline" }}>
-          quickstart
+        Moving from Daraja?{" "}
+        <Link href="/docs/quickstart" style={{ color: "#6fe0ad", textDecoration: "underline", textUnderlineOffset: 3 }}>
+          Quickstart
         </Link>
-        . Most teams switch with a single request change.
       </p>
     </>
   );

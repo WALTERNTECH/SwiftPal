@@ -39,11 +39,6 @@ export const B2C_BANDS: Band[] = [
   { min: 150_000, max: 250_000, flat: 180 },
 ];
 
-/** What a typical aggregator charges, for the side-by-side on the pricing page. */
-export const MARKET_STK_FEE = 3;
-export const MARKET_B2C_BANDS: number[] = [6, 12, 18, 23, 30, 33, 40, 50, 55, 65, 85, 110, 150, 170, 200];
-export const MARKET_B2C_TOP_PERCENT = 2;
-
 export const STARTER_CREDIT = 50;
 export const B2C_MIN = 10;
 export const B2C_MAX = 250_000;
@@ -62,10 +57,3 @@ export function feeFor(bands: Band[], amount: number): number | null {
 
 export const stkFee = (amount: number) => feeFor(STK_BANDS, amount);
 export const b2cFee = (amount: number) => feeFor(B2C_BANDS, amount);
-
-export function marketB2cFee(amount: number): number | null {
-  const i = B2C_BANDS.findIndex((b) => amount >= b.min && (b.max === null || amount <= b.max));
-  if (i < 0) return null;
-  if (i === B2C_BANDS.length - 1) return Math.round(amount * MARKET_B2C_TOP_PERCENT) / 100;
-  return MARKET_B2C_BANDS[i];
-}

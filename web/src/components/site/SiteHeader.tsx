@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
-import { Logo } from "@/components/Logo";
+import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
+import { Logo } from "@/components/Logo";
+import { ScrollProgress } from "@/components/motion";
 
 const NAV = [
   { href: "/#products", label: "Products" },
@@ -16,50 +17,63 @@ const NAV = [
 export function SiteHeader() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const on = () => setScrolled(window.scrollY > 8);
+    on();
+    window.addEventListener("scroll", on, { passive: true });
+    return () => window.removeEventListener("scroll", on);
+  }, []);
+
+  useEffect(() => setOpen(false), [path]);
+
+  const current = (href: string) => !href.includes("#") && (path === href || (href !== "/" && path.startsWith(href + "/")) || path === href);
+
   return (
-    <header className="site-header">
-      <div className="container site-header-inner">
+    <header className={`site-header ${scrolled ? "scrolled" : ""} ${open ? "open" : ""}`}>
+      <div className="site-header-inner">
         <Logo />
         <nav className="site-nav" aria-label="Main">
           {NAV.map((n) => (
-            <Link
-              key={n.href}
-              href={n.href}
-              aria-current={path === n.href || (n.href !== "/" && path.startsWith(n.href) && !n.href.includes("#")) ? "page" : undefined}
-            >
+            <Link key={n.href} href={n.href} aria-current={current(n.href) ? "page" : undefined}>
               {n.label}
             </Link>
           ))}
         </nav>
         <div className="site-actions">
-          <Link href="/login" className="btn btn-ghost">
+          <Link href="/login" className="site-signin">
             Sign in
           </Link>
-          <Link href="/signup" className="btn btn-ink">
-            Create account
+          <Link href="/signup" className="split-btn">
+            <span>Start integrating</span>
+            <i>
+              <Icon name="arrowRight" size={14} />
+            </i>
           </Link>
         </div>
-        <button className="btn btn-ghost site-menu" aria-label="Menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-          <Icon name={open ? "x" : "menu"} size={18} />
+        <button className="site-menu" aria-label="Menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span />
+          <span />
         </button>
       </div>
-      {open && (
-        <div className="site-drawer">
-          {NAV.map((n) => (
-            <Link key={n.href} href={n.href} onClick={() => setOpen(false)}>
-              {n.label}
-            </Link>
-          ))}
-          <div className="site-drawer-actions">
-            <Link href="/login" className="btn btn-line btn-block">
-              Sign in
-            </Link>
-            <Link href="/signup" className="btn btn-ink btn-block">
-              Create account
-            </Link>
-          </div>
+      <ScrollProgress />
+      <div className="site-drawer" aria-hidden={!open}>
+        {NAV.map((n, i) => (
+          <Link key={n.href} href={n.href} style={{ ["--i" as string]: i }} tabIndex={open ? 0 : -1}>
+            {n.label}
+            <Icon name="arrowUpRight" size={16} />
+          </Link>
+        ))}
+        <div className="site-drawer-actions" style={{ ["--i" as string]: NAV.length }}>
+          <Link href="/login" className="btn btn-line btn-lg btn-block" tabIndex={open ? 0 : -1}>
+            Sign in
+          </Link>
+          <Link href="/signup" className="btn btn-pine btn-lg btn-block" tabIndex={open ? 0 : -1}>
+            Start integrating <Icon name="arrowRight" size={15} className="arrow" />
+          </Link>
         </div>
-      )}
+      </div>
     </header>
   );
 }

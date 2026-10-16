@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { PasswordInput } from "@/components/auth/PasswordInput";
-import { CodeBlock } from "@/components/CodeBlock";
+import { TypedCode } from "@/components/TypedCode";
 import { getState, signIn } from "@/lib/store";
 
 export default function Login() {
@@ -41,13 +41,11 @@ export default function Login() {
       side={
         <>
           <div>
-            <div className="eyebrow" style={{ color: "#6fbf9b" }}>Status</div>
-            <h2 style={{ marginTop: 12 }}>Your integration, at a glance.</h2>
-            <p className="muted" style={{ marginTop: 10 }}>
-              Balances, success rate and the last webhook delivery are on the first screen after you sign in.
-            </p>
+            <div className="eyebrow">Dashboard</div>
+            <h2 style={{ marginTop: 12 }}>Balances, payments and webhook deliveries.</h2>
           </div>
-          <CodeBlock
+          <TypedCode
+            cps={110}
             tabs={[
               {
                 label: "GET /v1/balance",

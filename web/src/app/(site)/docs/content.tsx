@@ -77,6 +77,15 @@ const EVENTS: [string, string][] = [
   ["wallet.low_balance", "A balance crossed the alert threshold you set."],
 ];
 
+const FAQ: [string, string][] = [
+  ["Do I need my own Daraja app or shortcode approval?", "No. SwiftPal holds the Daraja integration. You add the Paybill or Till you already use, and prompts pay into it."],
+  ["Where do customer payments settle?", "In the Paybill or Till you registered, the same as a payment made from the M-Pesa menu."],
+  ["What happens when fee credit runs out?", "Requests return 402 insufficient_fee_credit. Turn on auto-cover to take fees from payout float instead, and set a low-balance alert in the dashboard."],
+  ["What do I need to go live?", "For STK Push, a Till or Paybill verified with a KES 1 prompt. For B2C payouts, approved business details: ID and KRA PIN, or a registration certificate and CR12."],
+  ["Can I withdraw payout float?", "Yes, to the M-Pesa number on your account, at the normal B2C fee for the amount."],
+  ["Is there a sandbox?", "Yes. sp_test_ keys simulate prompts, payouts and webhooks with the same responses as live. See Sandbox for numbers that force each outcome."],
+];
+
 export const DOCS: DocPage[] = [
   {
     slug: "",
@@ -267,7 +276,7 @@ export const DOCS: DocPage[] = [
     slug: "stk-push",
     group: "Collect",
     title: "STK Push",
-    lede: "Send an M-Pesa PIN prompt to a customer's phone. The money settles straight into your Till or Paybill.",
+    lede: "Send an M-Pesa PIN prompt to a customer's phone and get the result by webhook.",
     body: () => (
       <>
         <Endpoint method="POST" path="/v1/stk-push" />
@@ -427,6 +436,25 @@ export const DOCS: DocPage[] = [
           land in seconds. You can also pay SwiftPal&apos;s Paybill directly with your account number as the reference.
         </p>
       </>
+    ),
+  },
+  {
+    slug: "faq",
+    group: "Reference",
+    title: "FAQ",
+    lede: "Short answers to what teams ask before they integrate.",
+    body: () => (
+      <div className="faq">
+        {FAQ.map(([q, a]) => (
+          <details key={q}>
+            <summary>
+              {q}
+              <Icon name="plus" size={16} />
+            </summary>
+            <p className="muted">{a}</p>
+          </details>
+        ))}
+      </div>
     ),
   },
   {

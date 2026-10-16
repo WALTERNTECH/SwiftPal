@@ -8,7 +8,7 @@ export type CodeTab = { label: string; lang: Lang; code: string };
 const KEYWORDS =
   "const|let|var|await|async|import|from|return|if|else|def|new|function|export|require|echo|print|for|in|try|catch|throw|use|class|public|private|with|as|null|true|false|None|True|False";
 
-function tokenize(code: string, lang: Lang): { t: string; c?: string }[] {
+export function tokenize(code: string, lang: Lang): { t: string; c?: string }[] {
   if (lang === "text") return [{ t: code }];
   const hashComments = lang === "bash" || lang === "python";
   const re = new RegExp(
@@ -48,6 +48,27 @@ export function Highlight({ code, lang }: { code: string; lang: Lang }) {
       )}
     </>
   );
+}
+
+/** Highlighted code cut off after `upto` characters, for the typing effect. */
+export function HighlightUpTo({ tokens, upto }: { tokens: { t: string; c?: string }[]; upto: number }) {
+  const out: React.ReactNode[] = [];
+  let left = upto;
+  for (let i = 0; i < tokens.length && left > 0; i++) {
+    const tok = tokens[i];
+    const text = tok.t.length <= left ? tok.t : tok.t.slice(0, left);
+    left -= text.length;
+    out.push(
+      tok.c ? (
+        <span key={i} className={tok.c}>
+          {text}
+        </span>
+      ) : (
+        text
+      ),
+    );
+  }
+  return <>{out}</>;
 }
 
 export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {

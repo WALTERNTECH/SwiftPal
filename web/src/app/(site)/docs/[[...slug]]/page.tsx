@@ -27,7 +27,7 @@ export default async function DocPage({ params }: Props) {
   const items = DOCS.map(({ slug, title, group }) => ({ slug, title, group }));
 
   return (
-    <div className="container docs">
+    <div className="docs">
       <DocsNav items={items} />
       <article className="doc">
         <DocsMobileNav items={items} current={doc.slug} />

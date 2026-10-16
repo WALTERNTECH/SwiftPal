@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
+import { ThemeSwitch } from "@/components/ThemeSwitch";
 import { SITE } from "@/lib/site";
 
 const COLS = [
@@ -8,6 +9,7 @@ const COLS = [
     links: [
       { href: "/docs/stk-push", label: "STK Push" },
       { href: "/docs/payouts", label: "B2C payouts" },
+      { href: "/docs/payouts", label: "Bulk disbursements" },
       { href: "/docs/webhooks", label: "Webhooks" },
       { href: "/pricing", label: "Pricing" },
     ],
@@ -19,6 +21,7 @@ const COLS = [
       { href: "/docs/quickstart", label: "Quickstart" },
       { href: "/docs/sandbox", label: "Sandbox" },
       { href: "/docs/errors", label: "Error codes" },
+      { href: "/docs/faq", label: "FAQ" },
     ],
   },
   {
@@ -26,7 +29,6 @@ const COLS = [
     links: [
       { href: `mailto:${SITE.supportEmail}`, label: "Support" },
       { href: `mailto:${SITE.salesEmail}`, label: "Sales" },
-      { href: "/signup", label: "Create account" },
       { href: "/login", label: "Sign in" },
     ],
   },
@@ -35,27 +37,28 @@ const COLS = [
 export function SiteFooter() {
   return (
     <footer className="site-footer">
-      <div className="container">
-        <div className="footer-grid">
-          <div className="footer-brand">
-            <Logo />
-            <p className="muted">M-Pesa STK Push and B2C payouts for developers. Built in Nairobi.</p>
+      <div className="footer-grid">
+        <div className="footer-brand">
+          <Logo />
+          <p>M-Pesa STK Push and B2C payouts through one API.</p>
+        </div>
+        {COLS.map((c) => (
+          <div key={c.title} className="footer-col">
+            <div className="eyebrow">{c.title}</div>
+            {c.links.map((l) => (
+              <Link key={l.label} href={l.href}>
+                {l.label}
+              </Link>
+            ))}
           </div>
-          {COLS.map((c) => (
-            <div key={c.title} className="footer-col">
-              <div className="eyebrow">{c.title}</div>
-              {c.links.map((l) => (
-                <Link key={l.label} href={l.href}>
-                  {l.label}
-                </Link>
-              ))}
-            </div>
-          ))}
-        </div>
-        <div className="footer-base">
-          <span>© 2026 SwiftPal. Nairobi, Kenya.</span>
-          <span className="mono">M-Pesa is a trademark of Safaricom PLC. SwiftPal is not affiliated with Safaricom.</span>
-        </div>
+        ))}
+      </div>
+      <div className="footer-word" aria-hidden>
+        swiftpal
+      </div>
+      <div className="footer-base">
+        <ThemeSwitch />
+        <span>© 2026 SwiftPal. All rights reserved.</span>
       </div>
     </footer>
   );

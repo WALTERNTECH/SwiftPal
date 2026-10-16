@@ -16,7 +16,7 @@ export default function Channels() {
     <>
       <PageHeader
         title="Channels"
-        sub="The Tills and Paybills your STK Push payments settle into. Payments go straight to them, never through SwiftPal."
+        sub="Tills and Paybills your STK Push requests route to."
         actions={
           <button className="btn btn-ink" onClick={() => setAdding(true)}>
             <Icon name="plus" size={15} /> Add channel

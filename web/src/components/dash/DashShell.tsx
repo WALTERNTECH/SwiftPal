@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "@/components/Icon";
 import { LogoMark } from "@/components/Logo";
+import { ThemeSwitch } from "@/components/ThemeSwitch";
 import { resetPrototype, setMode, signOut, useHydrated, useStore } from "@/lib/store";
 import { ToastHost } from "./ui";
 
@@ -93,6 +94,9 @@ export function DashShell({ children }: { children: ReactNode }) {
             <Link href="/docs" className="side-doc">
               <Icon name="book" size={15} /> Documentation <Icon name="external" size={12} className="dim" />
             </Link>
+            <div className="side-theme">
+              <ThemeSwitch />
+            </div>
             <div className="preview-note">
               <b>Preview build</b>
               <span>Data is simulated and stays in this browser.</span>

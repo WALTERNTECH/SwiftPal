@@ -25,7 +25,7 @@ import "./onboarding.css";
 
 const STEPS = [
   { t: "Your business", d: "Who you are and what you're building" },
-  { t: "Where money lands", d: "Your Till or Paybill" },
+  { t: "Till or Paybill", d: "Verified with KES 1" },
   { t: "Your keys", d: "Send a first test payment" },
 ];
 
@@ -234,11 +234,8 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
   return (
     <div className="onb-card wide">
       <div>
-        <h1>Where should customer payments land?</h1>
-        <p className="muted">
-          Add the Till or Paybill you already use. STK Push payments settle straight into it, and SwiftPal never holds the
-          money.
-        </p>
+        <h1>Add your Till or Paybill</h1>
+        <p className="muted">The shortcode your STK Push requests route to. We confirm it with a KES 1 prompt.</p>
       </div>
 
       <div className="onb-split">
