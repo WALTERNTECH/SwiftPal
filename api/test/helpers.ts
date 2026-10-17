@@ -1,0 +1,76 @@
+import type { FastifyInstance } from "fastify";
+import type { App } from "../src/app.js";
+import { loadConfig } from "../src/config.js";
+import { pgliteDb } from "../src/db.js";
+import { createApp } from "../src/index.js";
+import { migrate } from "../src/migrate.js";
+import { buildServer } from "../src/server.js";
+
+export type Ctx = { app: App; api: FastifyInstance; mails: { to: string; subject: string; text: string }[] };
+
+export async function boot(env: Record<string, string> = {}): Promise<Ctx> {
+  const mails: Ctx["mails"] = [];
+  const cfg = loadConfig({ NODE_ENV: "test", SANDBOX_DELAY_MS: "40", ALLOW_PRIVATE_WEBHOOKS: "true", ADMIN_TOKEN: "admin-token-for-tests", ...env });
+  const app = await createApp({
+    cfg,
+    db: await pgliteDb(),
+    log: { info: () => {}, warn: () => {}, error: (...a: unknown[]) => console.error(...a) },
+    mail: { send: async (to, subject, text) => void mails.push({ to, subject, text }) },
+  });
+  await migrate(app.db);
+  const api = await buildServer(app);
+  return { app, api, mails };
+}
+
+export async function stop(c: Ctx) {
+  (c.app.mpesa.test as unknown as { stop?: () => void }).stop?.();
+  await c.api.close();
+  await c.app.db.close();
+}
+
+/** A signed-in dashboard session plus a test API key. */
+export async function merchant(c: Ctx, email = `dev${Math.random().toString(36).slice(2, 8)}@example.co.ke`) {
+  const res = await c.api.inject({
+    method: "POST",
+    url: "/app/auth/signup",
+    payload: { first_name: "Amina", last_name: "Otieno", email, phone: "0712345678", password: "correct-horse-battery" },
+  });
+  if (res.statusCode !== 201) throw new Error(`signup failed ${res.statusCode} ${res.body}`);
+  const cookie = String(res.headers["set-cookie"]).split(";")[0];
+  const code = c.mails.filter((m) => m.to === email).at(-1)!.text.match(/\b(\d{6})\b/)![1];
+  const dash = (method: string, url: string, payload?: unknown) =>
+    c.api.inject({ method: method as never, url, payload: payload as never, headers: { cookie, "x-requested-with": "SwiftPal" } });
+  const v = await dash("POST", "/app/auth/verify-email", { code });
+  if (v.statusCode !== 200) throw new Error(`verify failed ${v.body}`);
+  const keys = (await dash("GET", "/app/keys")).json() as { secret: string; mode: string }[];
+  const key = keys.find((k) => k.mode === "test")!.secret;
+  const api = (method: string, url: string, payload?: unknown, headers: Record<string, string> = {}) =>
+    c.api.inject({ method: method as never, url, payload: payload as never, headers: { authorization: `Bearer ${key}`, ...headers } });
+  const me = (await dash("GET", "/app/me")).json() as { merchant: { id: string } };
+  return { email, cookie, key, dash, api, merchantId: me.merchant.id };
+}
+
+export async function waitFor<T>(fn: () => Promise<T | null | undefined | false>, ms = 3000): Promise<T> {
+  const until = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > until) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/** multipart/form-data body for inject. */
+export function form(fields: Record<string, string>, files: Record<string, { name: string; type: string; bytes: Buffer }>) {
+  const boundary = "----swiftpaltest" + Math.random().toString(16).slice(2);
+  const parts: Buffer[] = [];
+  for (const [k, v] of Object.entries(fields)) parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+  for (const [k, f] of Object.entries(files)) {
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"; filename="${f.name}"\r\nContent-Type: ${f.type}\r\n\r\n`));
+    parts.push(f.bytes, Buffer.from("\r\n"));
+  }
+  parts.push(Buffer.from(`--${boundary}--\r\n`));
+  return { body: Buffer.concat(parts), contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+export const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]), Buffer.alloc(200, 1), Buffer.from([0xff, 0xd9])]);
