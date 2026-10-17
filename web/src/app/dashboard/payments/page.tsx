@@ -1,15 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { kes } from "@/components/dash/charts";
-import { downloadCsv, Empty, PageHeader, PayBadge } from "@/components/dash/ui";
-import { summarise, rangeStart } from "@/lib/analytics";
+import { downloadCsv, Empty, PageHeader, PayBadge, useToast } from "@/components/dash/ui";
+import { api, useApi, useMode, usePaged, type Analytics, type Payment } from "@/lib/api";
 import { dateTime, fee, maskPhone, money } from "@/lib/format";
-import { useStore, type PayStatus } from "@/lib/store";
 
-type Filter = "all" | PayStatus | "unpaid";
+type Filter = "all" | "succeeded" | "pending" | "unpaid";
 const FILTERS: { v: Filter; t: string }[] = [
   { v: "all", t: "All" },
   { v: "succeeded", t: "Succeeded" },
@@ -21,25 +20,43 @@ const PAGE = 15;
 const initials = (phone: string) => phone.slice(-2);
 
 export default function Payments() {
-  const s = useStore();
+  const mode = useMode();
+  const toast = useToast();
   const { open, showPayment } = useActions();
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
-  const [page, setPage] = useState(0);
+  const [needle, setNeedle] = useState("");
+  const [exporting, setExporting] = useState(false);
 
-  const mine = useMemo(() => s.payments.filter((p) => p.mode === s.mode), [s.payments, s.mode]);
-  const sum = useMemo(() => summarise(mine, [], rangeStart(30), Date.now() + 86_400_000), [mine]);
-  const count = (f: Filter) =>
-    f === "all" ? mine.length : f === "unpaid" ? mine.filter((p) => ["failed", "cancelled", "expired"].includes(p.status)).length : mine.filter((p) => p.status === f).length;
+  useEffect(() => {
+    const t = setTimeout(() => setNeedle(q.trim()), 250);
+    return () => clearTimeout(t);
+  }, [q]);
 
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return mine
-      .filter((p) => (filter === "all" ? true : filter === "unpaid" ? ["failed", "cancelled", "expired"].includes(p.status) : p.status === filter))
-      .filter((p) => !needle || [p.phone, p.reference, p.receipt ?? "", p.id].some((v) => v.toLowerCase().includes(needle)));
-  }, [mine, filter, q]);
-  const shown = rows.slice(page * PAGE, page * PAGE + PAGE);
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  const params = new URLSearchParams({ mode });
+  if (filter !== "all") params.set("status", filter);
+  if (needle) params.set("q", needle);
+  const { data: counts } = useApi<Record<Filter, number>>(`/app/payments/counts?mode=${mode}`);
+  const { data: month } = useApi<Analytics>(`/app/analytics?mode=${mode}&days=30`);
+  const list = usePaged<Payment>(`/app/payments?${params}`, PAGE, (counts?.pending ?? 0) > 0 ? 3000 : 15_000);
+  const sum = month?.current;
+  const shown = list.rows;
+  const from = list.page * PAGE;
+
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      const all = await api<Payment[]>(`/app/payments?${params}&limit=200`);
+      downloadCsv(`swiftpal-payments-${mode}.csv`, [
+        ["id", "created_at", "status", "amount", "phone", "reference", "mpesa_receipt", "fee_charged", "channel"],
+        ...all.map((p) => [p.id, p.created_at, p.status, p.amount, p.phone, p.reference, p.mpesa_receipt, p.fee.charged ? p.fee.amount : 0, p.channel]),
+      ]);
+      if (all.length === 200) toast("Exported the latest 200 payments");
+    } catch (err) {
+      toast((err as Error).message, "alert");
+    }
+    setExporting(false);
+  }
 
   return (
     <>
@@ -48,44 +65,35 @@ export default function Payments() {
         sub="STK Push collections"
         actions={
           <>
-            <button
-              className="btn btn-line"
-              disabled={!rows.length}
-              onClick={() =>
-                downloadCsv(`swiftpal-payments-${s.mode}.csv`, [
-                  ["id", "created_at", "status", "amount", "phone", "reference", "mpesa_receipt", "fee_charged", "channel"],
-                  ...rows.map((p) => [p.id, p.createdAt, p.status, p.amount, p.phone, p.reference, p.receipt, p.feeCharged ? p.fee : 0, p.channel]),
-                ])
-              }
-            >
-              <Icon name="download" size={15} /> Export
+            <button className="btn btn-line" disabled={!shown.length || exporting} onClick={exportCsv}>
+              {exporting ? <span className="spinner" /> : <Icon name="download" size={15} />} Export
             </button>
             <button className="btn btn-pine" onClick={() => open("payment")}>
-              <Icon name="plus" size={15} /> {s.mode === "test" ? "Test payment" : "Request payment"}
+              <Icon name="plus" size={15} /> {mode === "test" ? "Test payment" : "Request payment"}
             </button>
           </>
         }
       />
 
       <dl className="mini-stats rise">
-        <div><dt>Collected · 30d</dt><dd>{kes(sum.collected)}</dd></div>
-        <div><dt>Successful</dt><dd>{sum.paid}</dd></div>
-        <div><dt>Success rate</dt><dd>{sum.rate === null ? "—" : `${(sum.rate * 100).toFixed(1)}%`}</dd></div>
-        <div><dt>Average ticket</dt><dd>{sum.avgTicket ? kes(sum.avgTicket) : "—"}</dd></div>
+        <div><dt>Collected · 30d</dt><dd>{sum ? kes(sum.collected) : "—"}</dd></div>
+        <div><dt>Successful</dt><dd>{sum ? sum.successful : "—"}</dd></div>
+        <div><dt>Success rate</dt><dd>{!sum || sum.success_rate === null ? "—" : `${(sum.success_rate * 100).toFixed(1)}%`}</dd></div>
+        <div><dt>Average ticket</dt><dd>{sum?.average_ticket ? kes(sum.average_ticket) : "—"}</dd></div>
       </dl>
 
       <section className="panel rise" style={{ ["--d" as string]: "60ms" }}>
         <div className="filters">
           <div className="pill-filter" role="group" aria-label="Status">
             {FILTERS.map((f) => (
-              <button key={f.v} aria-pressed={filter === f.v} onClick={() => { setFilter(f.v); setPage(0); }}>
-                {f.t} <em>{count(f.v)}</em>
+              <button key={f.v} aria-pressed={filter === f.v} onClick={() => setFilter(f.v)}>
+                {f.t} <em>{counts ? counts[f.v] : ""}</em>
               </button>
             ))}
           </div>
           <div className="search" style={{ marginLeft: "auto" }}>
             <Icon name="search" size={15} />
-            <input className="input" placeholder="Phone, reference or receipt" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} aria-label="Search payments" />
+            <input className="input" placeholder="Phone, reference or receipt" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search payments" />
           </div>
         </div>
         {shown.length ? (
@@ -115,9 +123,9 @@ export default function Payments() {
                         </span>
                       </td>
                       <td className="mono">{p.reference}</td>
-                      <td className="mono">{p.receipt ?? <span className="dim">—</span>}</td>
-                      <td className="right num">{p.feeCharged ? fee(p.fee) : <span className="dim">0</span>}</td>
-                      <td className="muted">{dateTime(p.createdAt)}</td>
+                      <td className="mono">{p.mpesa_receipt ?? <span className="dim">—</span>}</td>
+                      <td className="right num">{p.fee.charged ? fee(p.fee.amount) : <span className="dim">0</span>}</td>
+                      <td className="muted">{dateTime(p.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -125,20 +133,23 @@ export default function Payments() {
             </div>
             <div className="table-foot">
               <span>
-                {page * PAGE + 1}–{Math.min(rows.length, (page + 1) * PAGE)} of {rows.length}
+                {from + 1}–{from + shown.length}
+                {!needle && counts ? ` of ${counts[filter]}` : ""}
               </span>
               <div className="row" style={{ gap: 6 }}>
-                <button className="btn btn-line btn-sm" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
-                <button className="btn btn-line btn-sm" disabled={page >= pages - 1} onClick={() => setPage(page + 1)}>Next</button>
+                <button className="btn btn-line btn-sm" disabled={list.page === 0} onClick={list.prev}>Previous</button>
+                <button className="btn btn-line btn-sm" disabled={!list.hasNext} onClick={list.next}>Next</button>
               </div>
             </div>
           </>
+        ) : list.loading ? (
+          <div className="empty"><span className="spinner" /></div>
         ) : (
           <Empty
             icon="collect"
-            title={q || filter !== "all" ? "No payments match" : "No payments yet"}
-            body={q || filter !== "all" ? "Try another filter." : s.mode === "live" ? "Live payments appear here." : "Send a test STK Push."}
-            action={!q && filter === "all" ? <button className="btn btn-pine" onClick={() => open("payment")}>Send a test payment</button> : undefined}
+            title={needle || filter !== "all" ? "No payments match" : "No payments yet"}
+            body={list.error ? list.error.message : needle || filter !== "all" ? "Try another filter." : mode === "live" ? "Live payments appear here." : "Send a test STK Push."}
+            action={!needle && filter === "all" ? <button className="btn btn-pine" onClick={() => open("payment")}>{mode === "test" ? "Send a test payment" : "Request a payment"}</button> : undefined}
           />
         )}
       </section>

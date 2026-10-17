@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { CodeBlock } from "@/components/CodeBlock";
+import { useEffect, useState } from "react";
+import { CodeBlock, CopyButton } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
 import { Empty, Modal, PageHeader, useToast } from "@/components/dash/ui";
-import { dateTime } from "@/lib/format";
+import { api, invalidate, useApi, useMode, type ApiError, type Delivery, type Endpoint } from "@/lib/api";
+import { dateTime, timeAgo } from "@/lib/format";
 import { VERIFY_SNIPPETS } from "@/lib/snippets";
-import { addWebhook, removeWebhook, toggleWebhook, useStore } from "@/lib/store";
 
 const EVENTS = [
   "payment.succeeded",
@@ -20,27 +20,43 @@ const EVENTS = [
   "wallet.low_balance",
 ];
 
+const host = (url: string) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
+
 export default function Webhooks() {
-  const s = useStore();
+  const mode = useMode();
   const toast = useToast();
   const [adding, setAdding] = useState(false);
   const [reveal, setReveal] = useState<Record<string, boolean>>({});
-  const hooks = s.webhooks.filter((w) => w.mode === s.mode);
+  const [testing, setTesting] = useState<string | null>(null);
+  const { data: hooks, loading } = useApi<Endpoint[]>(`/app/webhooks?mode=${mode}`);
+  const { data: deliveries } = useApi<Delivery[]>(`/app/webhooks/deliveries?mode=${mode}`, { refreshMs: 10_000 });
 
-  // Deliveries are derived from settled transactions; one per event per enabled endpoint.
-  const deliveries = useMemo(() => {
-    const live = hooks.filter((h) => h.enabled);
-    if (!live.length) return [];
-    const evts = [
-      ...s.payments.filter((p) => p.mode === s.mode && p.status !== "pending").map((p) => ({ id: p.id, type: `payment.${p.status}`, at: p.createdAt })),
-      ...s.payouts.filter((p) => p.mode === s.mode && p.status !== "processing").map((p) => ({ id: p.id, type: `payout.${p.status}`, at: p.createdAt })),
-    ].sort((a, b) => b.at.localeCompare(a.at));
-    return evts.slice(0, 25).flatMap((e, i) =>
-      live
-        .filter((h) => h.events.includes(e.type))
-        .map((h) => ({ ...e, url: h.url, code: i % 11 === 4 ? 500 : 200, ms: 30 + ((i * 37) % 180), attempts: i % 11 === 4 ? 2 : 1 })),
-    );
-  }, [hooks, s.payments, s.payouts, s.mode]);
+  async function run(fn: () => Promise<unknown>, done?: string) {
+    try {
+      await fn();
+      invalidate("/app/webhooks");
+      if (done) toast(done);
+    } catch (err) {
+      toast((err as ApiError).message, "alert");
+    }
+  }
+
+  async function sendTest(w: Endpoint) {
+    setTesting(w.id);
+    try {
+      const r = await api<{ status: number | null; ok: boolean; error: string | null; ms: number }>(`/app/webhooks/${w.id}/test`, { method: "POST" });
+      toast(r.ok ? `Test event delivered to ${host(w.url)} · ${r.status} in ${r.ms} ms` : `Test failed · ${r.status ?? r.error ?? "no response"}`, r.ok ? "check" : "alert");
+    } catch (err) {
+      toast((err as ApiError).message, "alert");
+    }
+    setTesting(null);
+  }
 
   return (
     <>
@@ -55,8 +71,8 @@ export default function Webhooks() {
       />
 
       <section className="panel">
-        <div className="panel-head"><h3>Endpoints</h3></div>
-        {hooks.length ? (
+        <div className="panel-head"><h3>Endpoints · {mode}</h3></div>
+        {hooks?.length ? (
           <div className="table-wrap">
             <table className="table">
               <thead><tr><th>URL</th><th>Events</th><th>Signing secret</th><th>Status</th><th /></tr></thead>
@@ -78,14 +94,28 @@ export default function Webhooks() {
                     </td>
                     <td>
                       <div className="row" style={{ gap: 8 }}>
-                        <button role="switch" aria-checked={w.enabled} className="switch" onClick={() => toggleWebhook(w.id)} aria-label="Enabled" />
+                        <button
+                          role="switch"
+                          aria-checked={w.enabled}
+                          className="switch"
+                          onClick={() => run(() => api(`/app/webhooks/${w.id}`, { method: "PATCH", body: { enabled: !w.enabled } }), w.enabled ? "Endpoint paused" : "Endpoint enabled")}
+                          aria-label="Enabled"
+                        />
                         <span className="muted" style={{ fontSize: 13 }}>{w.enabled ? "Enabled" : "Paused"}</span>
                       </div>
                     </td>
                     <td className="right">
                       <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
-                        <button className="btn btn-ghost btn-sm" onClick={() => toast(`Test event sent to ${new URL(w.url).host} · 200 OK`)}>Send test</button>
-                        <button className="btn btn-ghost btn-sm" style={{ color: "var(--bad)" }} onClick={() => confirm("Delete this endpoint?") && removeWebhook(w.id)}>Delete</button>
+                        <button className="btn btn-ghost btn-sm" disabled={testing === w.id} onClick={() => sendTest(w)}>
+                          {testing === w.id ? <span className="spinner" /> : "Send test"}
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ color: "var(--bad)" }}
+                          onClick={() => confirm("Delete this endpoint? Pending deliveries to it stop.") && run(() => api(`/app/webhooks/${w.id}`, { method: "DELETE" }), "Endpoint deleted")}
+                        >
+                          Delete
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -93,6 +123,8 @@ export default function Webhooks() {
               </tbody>
             </table>
           </div>
+        ) : loading ? (
+          <div className="empty"><span className="spinner" /></div>
         ) : (
           <Empty
             icon="webhook"
@@ -108,20 +140,37 @@ export default function Webhooks() {
           <h3>Recent deliveries</h3>
           <span className="muted" style={{ fontSize: 12.5 }}>Retried at 1m, 5m, 30m, 2h, 6h and 15h until your endpoint returns 2xx</span>
         </div>
-        {deliveries.length ? (
+        {deliveries?.length ? (
           <div className="table-wrap">
             <table className="table">
               <thead><tr><th>Event</th><th>Object</th><th>Endpoint</th><th>Response</th><th>Attempts</th><th>Time</th><th /></tr></thead>
               <tbody>
-                {deliveries.map((d, i) => (
-                  <tr key={d.id + d.url + i}>
+                {deliveries.map((d) => (
+                  <tr key={d.id} title={d.last_error ?? undefined}>
                     <td className="mono">{d.type}</td>
-                    <td className="mono muted">{d.id.slice(0, 18)}</td>
-                    <td className="mono muted">{new URL(d.url).host}</td>
-                    <td>{d.code === 200 ? <span className="badge ok">200 · {d.ms}ms</span> : <span className="badge bad">500 · retrying</span>}</td>
+                    <td className="mono muted">{d.object_id?.slice(0, 18) ?? "—"}</td>
+                    <td className="mono muted">{host(d.url)}</td>
+                    <td>
+                      {d.status === "succeeded" ? (
+                        <span className="badge ok">{d.last_status} · {d.last_duration_ms}ms</span>
+                      ) : d.status === "failed" ? (
+                        <span className="badge bad">{d.last_status ?? "No response"} · gave up</span>
+                      ) : d.attempts === 0 ? (
+                        <span className="badge info">Queued</span>
+                      ) : (
+                        <span className="badge warn">{d.last_status ?? "No response"} · retry {timeAgo(d.next_attempt_at).replace(" ago", "")}</span>
+                      )}
+                    </td>
                     <td className="num">{d.attempts}</td>
-                    <td className="muted">{dateTime(d.at)}</td>
-                    <td className="right"><button className="btn btn-ghost btn-sm" onClick={() => toast(`Replayed ${d.type}`, "refresh")}>Replay</button></td>
+                    <td className="muted">{dateTime(d.last_attempt_at ?? d.created_at)}</td>
+                    <td className="right">
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => run(() => api(`/app/webhooks/deliveries/${d.id}/replay`, { method: "POST" }), `Replaying ${d.type}`)}
+                      >
+                        Replay
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -143,40 +192,71 @@ export default function Webhooks() {
 }
 
 function AddEndpoint({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const s = useStore();
-  const toast = useToast();
+  const mode = useMode();
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>(EVENTS);
+  const [secret, setSecret] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setUrl("");
+      setEvents(EVENTS);
+      setSecret(null);
+      setBusy(false);
+      setError("");
+    }
+  }, [open]);
+
+  async function add() {
+    let u: URL;
+    try {
+      u = new URL(url.trim());
+    } catch {
+      return setError("Enter a full URL, starting with https://");
+    }
+    if (u.protocol !== "https:") return setError("Endpoints must use HTTPS.");
+    if (!events.length) return setError("Pick at least one event.");
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api<{ id: string; secret: string }>("/app/webhooks", { body: { url: u.toString(), events, mode } });
+      invalidate("/app/webhooks");
+      setSecret(r.secret);
+    } catch (err) {
+      setError((err as ApiError).message);
+    }
+    setBusy(false);
+  }
+
+  if (secret) {
+    return (
+      <Modal open={open} onClose={onClose} title="Endpoint added" footer={<button className="btn btn-ink" onClick={onClose}>Done</button>}>
+        <p className="muted" style={{ fontSize: 13.5 }}>
+          Verify the <code className="inline-code">SwiftPal-Signature</code> header on every request with this secret. It&apos;s also under the endpoint&apos;s row.
+        </p>
+        <div className="keybox">
+          <div className="keybox-row">
+            <code className="secret" style={{ wordBreak: "break-all" }}>{secret}</code>
+            <span className="keybox-copy"><CopyButton text={secret} /></span>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Add webhook endpoint"
+      title={`Add ${mode} webhook endpoint`}
       width={540}
       footer={
         <>
           <button className="btn btn-line" onClick={onClose}>Cancel</button>
-          <button
-            className="btn btn-ink"
-            onClick={() => {
-              let u: URL;
-              try {
-                u = new URL(url);
-              } catch {
-                return setError("Enter a full URL, starting with https://");
-              }
-              if (u.protocol !== "https:") return setError("Endpoints must use HTTPS.");
-              if (/^(localhost|127\.|10\.|192\.168\.)/.test(u.hostname)) return setError("We can't reach private addresses. Use a public URL or a tunnel.");
-              if (!events.length) return setError("Pick at least one event.");
-              addWebhook(u.toString(), events, s.mode);
-              toast("Endpoint added");
-              setUrl("");
-              setError("");
-              onClose();
-            }}
-          >
-            Add endpoint
+          <button className="btn btn-ink" onClick={add} disabled={busy}>
+            {busy ? <span className="spinner" /> : "Add endpoint"}
           </button>
         </>
       }

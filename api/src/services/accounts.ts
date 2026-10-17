@@ -181,6 +181,39 @@ export async function signOut(app: App, raw: string | undefined) {
   if (raw) await app.db.query(`delete from sessions where token_hash = $1`, [sha256(raw)]);
 }
 
+// ---------- password reset ----------
+
+/** Always succeeds from the caller's side, so it can't be used to find accounts. */
+export async function requestReset(app: App, email: string) {
+  const user = await one<User>(app.db, `select ${USER_COLS} from users where email = $1`, [email.trim().toLowerCase()]);
+  if (!user) return;
+  const recent = await one<{ n: number }>(app.db, `select count(*)::int as n from password_resets where user_id = $1 and created_at > now() - interval '1 minute'`, [user.id]);
+  if (recent && recent.n > 0) return;
+  const t = token(32);
+  await app.db.query(`insert into password_resets (token_hash, user_id, expires_at) values ($1,$2, now() + interval '30 minutes')`, [sha256(t), user.id]);
+  await app.mail.send(
+    user.email,
+    "Reset your SwiftPal password",
+    `Use this link to set a new password. It works once, for 30 minutes:\n\n${app.cfg.webUrl}/reset-password?token=${t}\n\nIf you didn't ask for this, ignore this email.`,
+  );
+}
+
+export async function resetPassword(app: App, raw: string, password: string, ip?: string, ua?: string) {
+  if (password.length < 10) throw new ApiError(400, "weak_password", "Use at least 10 characters.");
+  const hash = await hashPassword(password);
+  return app.db.tx(async (q) => {
+    const r = await one<{ user_id: string; bad: boolean }>(q, `select user_id, (used_at is not null or expires_at < now()) as bad from password_resets where token_hash = $1 for update`, [sha256(raw)]);
+    if (!r || r.bad) throw new ApiError(400, "invalid_reset_link", "This reset link has expired or was already used. Ask for a new one.");
+    await q.query(`update password_resets set used_at = now() where token_hash = $1`, [sha256(raw)]);
+    await q.query(`update users set password_hash = $2, email_verified_at = coalesce(email_verified_at, now()) where id = $1`, [r.user_id, hash]);
+    // Everyone signed in with the old password is signed out.
+    await q.query(`delete from sessions where user_id = $1`, [r.user_id]);
+    const session = await createSession(q, r.user_id, ip, ua);
+    const user = (await one<User>(q, `select ${USER_COLS} from users where id = $1`, [r.user_id]))!;
+    return { user, session };
+  });
+}
+
 export async function getMerchant(q: Q, id: string) {
   return (await one<Merchant>(q, `select * from merchants where id = $1`, [id]))!;
 }

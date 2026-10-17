@@ -6,7 +6,7 @@ import { useState } from "react";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { TypedCode } from "@/components/TypedCode";
-import { getState, signIn } from "@/lib/store";
+import { api, clearCache, type ApiError, type Me } from "@/lib/api";
 
 export default function Login() {
   const router = useRouter();
@@ -15,20 +15,23 @@ export default function Login() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()) || !password) {
       setError("Enter the email and password you signed up with.");
       return;
     }
     setBusy(true);
-    signIn(email.trim().toLowerCase());
-    const s = getState();
-    setTimeout(() => {
-      if (!s.account?.emailVerified) router.push("/verify-email");
-      else if (!s.onboardingDone) router.push("/onboarding");
-      else router.push("/dashboard");
-    }, 350);
+    setError("");
+    try {
+      clearCache();
+      await api("/app/auth/login", { body: { email: email.trim().toLowerCase(), password } });
+      const me = await api<Me>("/app/me");
+      router.push(!me.user.email_verified_at ? "/verify-email" : !me.merchant.onboarding_done ? "/onboarding" : "/dashboard");
+    } catch (err) {
+      setError((err as ApiError).message);
+      setBusy(false);
+    }
   }
 
   return (
@@ -81,9 +84,6 @@ export default function Login() {
         <button className="btn btn-ink btn-lg btn-block" disabled={busy}>
           {busy ? <span className="spinner" /> : "Sign in"}
         </button>
-        <p className="hint" style={{ textAlign: "center" }}>
-          Preview build: any email and password signs you into a demo account.
-        </p>
       </form>
     </AuthShell>
   );

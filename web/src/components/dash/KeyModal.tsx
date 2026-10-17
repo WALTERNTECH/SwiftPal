@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { CopyButton } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
-import { createKey, useStore, type ApiKey } from "@/lib/store";
+import { api, invalidate, useAccount, useMode, type ApiError } from "@/lib/api";
 import { Modal } from "./ui";
 
 const SCOPES = [
@@ -13,17 +13,23 @@ const SCOPES = [
 ];
 
 export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const s = useStore();
+  const me = useAccount();
+  const mode = useMode();
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>(["payments:write", "read"]);
-  const [fresh, setFresh] = useState<ApiKey | null>(null);
-  const payoutsLocked = s.mode === "live" && s.verification !== "approved";
+  const [fresh, setFresh] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const payoutsLocked = mode === "live" && me.merchant.verification_status !== "approved";
+  const liveLocked = mode === "live" && !me.merchant.live_enabled;
 
   useEffect(() => {
     if (open) {
       setName("");
       setScopes(["payments:write", "read"]);
       setFresh(null);
+      setBusy(false);
+      setError("");
     }
   }, [open]);
 
@@ -32,12 +38,12 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
       <Modal open={open} onClose={onClose} title="Copy your new key" footer={<button className="btn btn-ink" onClick={onClose}>Done</button>}>
         <div className="callout warn">
           <Icon name="alert" size={16} />
-          <span>Shown once. Store it in your secrets manager.</span>
+          <span>{mode === "live" ? "Shown once. Store it in your secrets manager." : "Store it in your secrets manager. Test keys stay visible under API keys."}</span>
         </div>
         <div className="keybox">
           <div className="keybox-row">
-            <code className="secret" style={{ wordBreak: "break-all" }}>{fresh.secret}</code>
-            <span className="keybox-copy"><CopyButton text={fresh.secret} /></span>
+            <code className="secret" style={{ wordBreak: "break-all" }}>{fresh}</code>
+            <span className="keybox-copy"><CopyButton text={fresh} /></span>
           </div>
         </div>
       </Modal>
@@ -48,19 +54,40 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
     <Modal
       open={open}
       onClose={onClose}
-      title={`New ${s.mode} key`}
+      title={`New ${mode} key`}
       footer={
         <>
           <button className="btn btn-line" onClick={onClose}>Cancel</button>
-          <button className="btn btn-pine" disabled={!name.trim() || !scopes.length} onClick={() => setFresh(createKey(name.trim(), s.mode, scopes))}>
-            Create key
+          <button
+            className="btn btn-pine"
+            disabled={!name.trim() || !scopes.length || busy || liveLocked}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                const k = await api<{ id: string; secret: string }>("/app/keys", { body: { name: name.trim(), mode, scopes } });
+                invalidate("/app/keys");
+                setFresh(k.secret);
+              } catch (err) {
+                setError((err as ApiError).message);
+              }
+              setBusy(false);
+            }}
+          >
+            {busy ? <span className="spinner" /> : "Create key"}
           </button>
         </>
       }
     >
+      {liveLocked && (
+        <div className="callout warn">
+          <Icon name="alert" size={16} />
+          <span>Live keys are issued once a Till or Paybill is verified.</span>
+        </div>
+      )}
       <div className="field">
         <label className="label" htmlFor="kn">Name</label>
-        <input id="kn" className="input" placeholder="checkout-service" value={name} onChange={(e) => setName(e.target.value)} />
+        <input id="kn" className="input" placeholder="checkout-service" maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
         <legend className="label" style={{ marginBottom: 8 }}>Scopes</legend>
@@ -83,6 +110,7 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
           })}
         </div>
       </fieldset>
+      {error && <div className="form-error">{error}</div>}
     </Modal>
   );
 }

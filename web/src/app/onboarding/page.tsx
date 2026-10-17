@@ -1,26 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { CodeBlock, CopyButton } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
 import { Logo } from "@/components/Logo";
 import { PhonePrompt, type PromptStage } from "@/components/PhonePrompt";
+import { api, invalidate, useApi, useMe, usePaymentWatch, type ApiError, type ApiKey, type Channel, type Merchant, type Payment } from "@/lib/api";
 import { maskPhone } from "@/lib/format";
 import { STARTER_CREDIT } from "@/lib/pricing";
 import { stkSnippets } from "@/lib/snippets";
-import {
-  addChannel,
-  finishOnboarding,
-  saveBusiness,
-  simulateStk,
-  useHydrated,
-  useStore,
-  verifyChannel,
-  type Business,
-  type BusinessType,
-} from "@/lib/store";
 import "./onboarding.css";
 
 const STEPS = [
@@ -29,19 +18,28 @@ const STEPS = [
   { t: "Your keys", d: "Send a first test payment" },
 ];
 
+async function finish() {
+  await api("/app/merchant", { method: "PATCH", body: { onboarding_done: true } });
+  await invalidate("/app/me");
+}
+
 export default function Onboarding() {
-  const s = useStore();
-  const hydrated = useHydrated();
   const router = useRouter();
+  const { data: me, error } = useMe();
   const [step, setStep] = useState(0);
 
   useEffect(() => {
-    if (!hydrated) return;
-    if (!s.account || !s.signedIn) router.replace("/signup");
-    else if (!s.account.emailVerified) router.replace("/verify-email");
-  }, [hydrated, s.account, s.signedIn, router]);
+    if (error?.status === 401) router.replace("/signup");
+    else if (me && !me.user.email_verified_at) router.replace("/verify-email");
+  }, [error, me, router]);
 
-  if (!hydrated || !s.account) return null;
+  if (!me) {
+    return (
+      <div className="onb" style={{ display: "grid", placeItems: "center" }}>
+        {error && error.status !== 401 ? <p className="muted">{error.message}</p> : <span className="spinner" />}
+      </div>
+    );
+  }
 
   return (
     <div className="onb">
@@ -50,13 +48,15 @@ export default function Onboarding() {
         <span className="muted mono" style={{ fontSize: 12.5 }}>
           Step {step + 1} of {STEPS.length}
         </span>
-        <Link
-          href="/dashboard"
+        <button
           className="btn btn-ghost btn-sm"
-          onClick={() => finishOnboarding()}
+          onClick={async () => {
+            await finish().catch(() => {});
+            router.push("/dashboard");
+          }}
         >
           Skip to dashboard
-        </Link>
+        </button>
       </header>
       <div className="onb-body">
         <ol className="onb-rail" aria-label="Setup steps">
@@ -71,13 +71,13 @@ export default function Onboarding() {
           ))}
         </ol>
         <div className="onb-main">
-          {step === 0 && <BusinessStep onNext={() => setStep(1)} />}
-          {step === 1 && <ChannelStep onBack={() => setStep(0)} onNext={() => setStep(2)} />}
+          {step === 0 && <BusinessStep merchant={me.merchant} onNext={() => setStep(1)} />}
+          {step === 1 && <ChannelStep phone={me.user.phone} businessName={me.merchant.name} existing={me.channels[0]} onBack={() => setStep(0)} onNext={() => setStep(2)} />}
           {step === 2 && (
             <KeysStep
               onBack={() => setStep(1)}
-              onDone={() => {
-                finishOnboarding();
+              onDone={async () => {
+                await finish().catch(() => {});
                 router.push("/dashboard");
               }}
             />
@@ -90,7 +90,7 @@ export default function Onboarding() {
 
 // ---------------------------------------------------------------------------
 
-const TYPES: { v: BusinessType; t: string; d: string }[] = [
+const TYPES: { v: Merchant["type"]; t: string; d: string }[] = [
   { v: "individual", t: "Individual", d: "Developer, freelancer or sole trader. Verified with your national ID." },
   { v: "company", t: "Registered company", d: "A limited company or partnership with a CR12." },
   { v: "ngo", t: "NGO, school or church", d: "A registered non-profit, institution or society." },
@@ -104,23 +104,36 @@ const VOLUMES = [
   { v: "gt-10m", t: "Over KES 10M" },
 ];
 
-function BusinessStep({ onNext }: { onNext: () => void }) {
-  const s = useStore();
-  const [b, setB] = useState<Business>(
-    s.business ?? { type: "individual", name: "", industry: "", monthlyVolume: "", website: "" },
-  );
+function BusinessStep({ merchant, onNext }: { merchant: Merchant; onNext: () => void }) {
+  const [b, setB] = useState({
+    type: merchant.type,
+    name: merchant.name,
+    industry: merchant.industry ?? "",
+    monthlyVolume: merchant.monthly_volume ?? "",
+    website: merchant.website ?? "",
+  });
   const [touched, setTouched] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const valid = b.name.trim().length > 1 && b.industry && b.monthlyVolume;
 
   return (
     <form
       className="onb-card"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
         setTouched(true);
         if (!valid) return;
-        saveBusiness({ ...b, name: b.name.trim() });
-        onNext();
+        setBusy(true);
+        setError("");
+        try {
+          await api("/app/merchant", { method: "PATCH", body: { name: b.name.trim(), type: b.type, industry: b.industry, monthly_volume: b.monthlyVolume, website: b.website.trim() } });
+          await invalidate("/app/me");
+          onNext();
+        } catch (err) {
+          setError((err as ApiError).message);
+        }
+        setBusy(false);
       }}
     >
       <div>
@@ -175,10 +188,12 @@ function BusinessStep({ onNext }: { onNext: () => void }) {
         <input id="site" className="input" placeholder="https://" value={b.website} onChange={(e) => setB({ ...b, website: e.target.value })} />
       </div>
 
+      {error && <div className="form-error">{error}</div>}
+
       <div className="onb-actions">
         <span />
-        <button className="btn btn-ink btn-lg">
-          Continue <Icon name="arrowRight" size={15} />
+        <button className="btn btn-ink btn-lg" disabled={busy}>
+          {busy ? <span className="spinner" /> : <>Continue <Icon name="arrowRight" size={15} /></>}
         </button>
       </div>
     </form>
@@ -187,52 +202,72 @@ function BusinessStep({ onNext }: { onNext: () => void }) {
 
 // ---------------------------------------------------------------------------
 
-type VerifyState = "form" | "sending" | "prompt" | "confirm" | "verified";
-
-function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
-  const s = useStore();
-  const existing = s.channels[0];
+function ChannelStep({ phone, businessName, existing, onBack, onNext }: { phone: string; businessName: string; existing?: Channel; onBack: () => void; onNext: () => void }) {
   const [kind, setKind] = useState<"till" | "paybill">(existing?.kind ?? "till");
   const [shortcode, setShortcode] = useState(existing?.shortcode ?? "");
-  const [account, setAccount] = useState(existing?.accountNumber ?? "");
-  const [displayName, setDisplayName] = useState(existing?.displayName ?? (s.business?.name ?? "").toUpperCase());
-  const [vs, setVs] = useState<VerifyState>(existing?.status === "verified" ? "verified" : "form");
-  const [stage, setStage] = useState<PromptStage>("idle");
+  const [account, setAccount] = useState(existing?.account_number ?? "");
+  const [displayName, setDisplayName] = useState(existing?.display_name ?? businessName.toUpperCase());
+  const [channel, setChannel] = useState<Channel | null>(existing ?? null);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [liveKey, setLiveKey] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [channelId, setChannelId] = useState(existing?.id ?? "");
-  const phone = s.account?.phone ?? "";
+  const payment = usePaymentWatch(paymentId);
 
-  const codeValid = /^\d{5,7}$/.test(shortcode);
+  const verified = channel?.status === "verified";
+  const vs = verified ? "verified" : sending ? "sending" : payment?.status === "pending" ? "prompt" : payment?.status === "succeeded" ? "confirm" : "form";
+  const stage: PromptStage = vs === "prompt" ? "prompt" : vs === "confirm" || vs === "verified" ? "done" : "idle";
+  const locked = vs !== "form";
 
-  function send() {
-    if (!codeValid) {
-      setError(kind === "till" ? "A till number is 5 to 7 digits." : "A paybill number is 5 to 7 digits.");
-      return;
+  useEffect(() => {
+    if (payment && ["failed", "cancelled", "expired"].includes(payment.status)) {
+      setError(payment.failure_message ? `The prompt didn't go through: ${payment.failure_message}.` : "The prompt didn't go through. Try again.");
+      setPaymentId(null);
     }
-    if (kind === "paybill" && !account.trim()) {
-      setError("Enter the account number for this paybill.");
-      return;
-    }
-    if (!displayName.trim()) {
-      setError("Enter the name customers see on the prompt.");
-      return;
-    }
+  }, [payment]);
+
+  async function send() {
+    if (!/^\d{5,7}$/.test(shortcode)) return setError(kind === "till" ? "A till number is 5 to 7 digits." : "A paybill number is 5 to 7 digits.");
+    if (kind === "paybill" && !account.trim()) return setError("Enter the account number for this paybill.");
+    if (!displayName.trim()) return setError("Enter the name customers see on the prompt.");
     setError("");
-    const id = addChannel({
-      kind,
-      shortcode,
-      accountNumber: kind === "paybill" ? account.trim() : undefined,
-      label: kind === "till" ? `Till ${shortcode}` : `Paybill ${shortcode}`,
-      displayName: displayName.trim().toUpperCase(),
-    });
-    setChannelId(id);
-    setVs("sending");
-    setStage("idle");
-    setTimeout(() => {
-      setVs("prompt");
-      setStage("prompt");
-    }, 1400);
-    setTimeout(() => setVs("confirm"), 3200);
+    setSending(true);
+    try {
+      let ch = channel;
+      const changed = ch && (ch.shortcode !== shortcode || ch.kind !== kind || (ch.account_number ?? "") !== account.trim() || ch.display_name !== displayName.trim().toUpperCase());
+      if (ch && changed) {
+        await api(`/app/channels/${ch.id}`, { method: "DELETE" });
+        ch = null;
+      }
+      if (!ch) {
+        ch = await api<Channel>("/app/channels", {
+          body: { kind, shortcode, account_number: kind === "paybill" ? account.trim() : undefined, display_name: displayName.trim() },
+        });
+        setChannel(ch);
+      }
+      const v = await api<{ channel: Channel; payment: Payment | null }>(`/app/channels/${ch.id}/verify`, { method: "POST" });
+      setChannel(v.channel);
+      if (v.payment) setPaymentId(v.payment.id);
+      invalidate("/app/me");
+    } catch (err) {
+      setError((err as ApiError).message);
+    }
+    setSending(false);
+  }
+
+  async function confirm() {
+    if (!channel) return;
+    setConfirming(true);
+    try {
+      const r = await api<{ channel: Channel; live_key: string | null }>(`/app/channels/${channel.id}/confirm`, { method: "POST" });
+      setChannel(r.channel);
+      setLiveKey(r.live_key);
+      invalidate("/app/me", "/app/keys", "/app/channels");
+    } catch (err) {
+      setError((err as ApiError).message);
+    }
+    setConfirming(false);
   }
 
   return (
@@ -245,29 +280,29 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
       <div className="onb-split">
         <div className="stack" style={{ gap: 18, alignContent: "start" }}>
           <div className="segmented" role="group" aria-label="Channel type" style={{ justifySelf: "start" }}>
-            <button type="button" aria-pressed={kind === "till"} onClick={() => setKind("till")} disabled={vs !== "form"}>
+            <button type="button" aria-pressed={kind === "till"} onClick={() => setKind("till")} disabled={locked}>
               Till · Buy Goods
             </button>
-            <button type="button" aria-pressed={kind === "paybill"} onClick={() => setKind("paybill")} disabled={vs !== "form"}>
+            <button type="button" aria-pressed={kind === "paybill"} onClick={() => setKind("paybill")} disabled={locked}>
               Paybill
             </button>
           </div>
 
           <div className="field">
             <label className="label" htmlFor="sc">{kind === "till" ? "Till number" : "Paybill number"}</label>
-            <input id="sc" className="input mono" inputMode="numeric" placeholder={kind === "till" ? "5521093" : "4061217"} value={shortcode} disabled={vs !== "form"} onChange={(e) => setShortcode(e.target.value.replace(/\D/g, "").slice(0, 7))} />
+            <input id="sc" className="input mono" inputMode="numeric" placeholder={kind === "till" ? "5521093" : "247247"} value={shortcode} disabled={locked} onChange={(e) => setShortcode(e.target.value.replace(/\D/g, "").slice(0, 7))} />
           </div>
 
           {kind === "paybill" && (
             <div className="field">
               <label className="label" htmlFor="acc">Account number</label>
-              <input id="acc" className="input mono" value={account} disabled={vs !== "form"} onChange={(e) => setAccount(e.target.value.slice(0, 20))} />
+              <input id="acc" className="input mono" value={account} disabled={locked} onChange={(e) => setAccount(e.target.value.slice(0, 20))} />
             </div>
           )}
 
           <div className="field">
             <label className="label" htmlFor="dn">Name on your M-Pesa statement</label>
-            <input id="dn" className="input" value={displayName} disabled={vs !== "form"} onChange={(e) => setDisplayName(e.target.value)} />
+            <input id="dn" className="input" value={displayName} disabled={locked} onChange={(e) => setDisplayName(e.target.value)} />
             <span className="hint">Use the name Safaricom shows for this {kind}. We check it against the verification prompt.</span>
           </div>
 
@@ -277,8 +312,8 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
             <div className="callout">
               <Icon name="phone" size={16} />
               <span>
-                We&apos;ll send a <b>KES 1</b> prompt to <b className="mono">{maskPhone(phone)}</b> that pays into this {kind}. Approve
-                it and the shilling lands in your own account. That proves the {kind} is real and that it&apos;s yours.
+                We&apos;ll send a <b>KES 1</b> prompt to <b className="mono">{maskPhone(phone)}</b> that pays into this {kind}. Approve it and
+                the shilling lands in your own account.
               </span>
             </div>
           )}
@@ -293,7 +328,9 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
           {vs === "prompt" && (
             <div className="callout info">
               <Icon name="phone" size={16} />
-              <span>Check your phone. The prompt should say <b>Pay Ksh1.00 to {displayName.toUpperCase()}</b>.</span>
+              <span>
+                Check your phone. The prompt should say <b>Pay Ksh1.00 to {displayName.toUpperCase()}</b>.
+              </span>
             </div>
           )}
 
@@ -304,23 +341,10 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
                 If the name is different, that {kind} isn&apos;t registered to your business. Check the number and try again.
               </p>
               <div className="row wrap">
-                <button
-                  className="btn btn-pine"
-                  onClick={() => {
-                    verifyChannel(channelId);
-                    setStage("done");
-                    setVs("verified");
-                  }}
-                >
-                  <Icon name="check" size={15} /> Yes, that&apos;s my business
+                <button className="btn btn-pine" onClick={confirm} disabled={confirming}>
+                  {confirming ? <span className="spinner" /> : <Icon name="check" size={15} />} Yes, that&apos;s my business
                 </button>
-                <button
-                  className="btn btn-line"
-                  onClick={() => {
-                    setVs("form");
-                    setStage("idle");
-                  }}
-                >
+                <button className="btn btn-line" onClick={() => setPaymentId(null)}>
                   No, edit details
                 </button>
               </div>
@@ -331,9 +355,26 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
             <div className="callout pine">
               <Icon name="check" size={16} />
               <span>
-                <b>{kind === "till" ? "Till" : "Paybill"} {shortcode} is verified.</b> Live STK Push is on, and KES {STARTER_CREDIT}{" "}
-                starter credit has been added to your fee balance.
+                <b>
+                  {kind === "till" ? "Till" : "Paybill"} {shortcode} is verified.
+                </b>{" "}
+                Live STK Push is on{liveKey ? `, and KES ${STARTER_CREDIT} starter credit is in your fee balance` : ""}.
               </span>
+            </div>
+          )}
+
+          {liveKey && (
+            <div className="keybox">
+              <div className="keybox-head">
+                <span className="badge ok">Live</span>
+                <span className="muted" style={{ fontSize: 13 }}>Your live secret key. It&apos;s shown once; store it now.</span>
+              </div>
+              <div className="keybox-row">
+                <code className="mono">{liveKey}</code>
+                <span className="keybox-copy">
+                  <CopyButton text={liveKey} />
+                </span>
+              </div>
             </div>
           )}
         </div>
@@ -345,7 +386,7 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
             merchant={(displayName || "YOUR BUSINESS").toUpperCase()}
             account={kind === "paybill" ? account || "—" : undefined}
             pinDigits={0}
-            receipt="TJG1V3RF7Y"
+            receipt={payment?.mpesa_receipt ?? "—"}
           />
           <span className="hint" style={{ textAlign: "center" }}>
             {stage === "idle" ? "Preview of what you'll see" : stage === "done" ? "Your confirmation SMS" : "Waiting for your PIN"}
@@ -382,38 +423,45 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
 // ---------------------------------------------------------------------------
 
 function KeysStep({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
-  const s = useStore();
-  const key = s.keys.find((k) => k.mode === "test");
+  const { data: keys } = useApi<ApiKey[]>("/app/keys");
+  const key = keys?.find((k) => k.mode === "test" && k.secret);
   const [show, setShow] = useState(false);
   const [paymentId, setPaymentId] = useState<string | null>(null);
-  const payment = s.payments.find((p) => p.id === paymentId);
-  const shownKey = key ? (show ? key.secret : key.secret.slice(0, 12) + "•".repeat(8) + key.secret.slice(-4)) : undefined;
+  const [error, setError] = useState("");
+  const payment = usePaymentWatch(paymentId);
+  const secret = key?.secret ?? "";
+  const shownKey = secret ? (show ? secret : secret.slice(0, 12) + "•".repeat(8) + secret.slice(-4)) : undefined;
   const snippets = useMemo(() => stkSnippets(shownKey, "254700000000", 100), [shownKey]);
 
   return (
     <div className="onb-card wide">
       <div>
         <h1>Your sandbox is ready</h1>
-        <p className="muted">
-          This test key sends simulated prompts and real webhooks. You can create more keys, and your live key, under
-          Developers.
-        </p>
+        <p className="muted">This test key sends simulated prompts and real webhooks. Create more keys under Developers.</p>
       </div>
 
-      {key && (
+      {key ? (
         <div className="keybox">
           <div className="keybox-head">
             <span className="badge warn">Test mode</span>
             <span className="muted" style={{ fontSize: 13 }}>Secret key</span>
           </div>
           <div className="keybox-row">
-            <code className="mono">{show ? key.secret : key.secret.slice(0, 12) + "•".repeat(20) + key.secret.slice(-4)}</code>
+            <code className="mono">{show ? secret : secret.slice(0, 12) + "•".repeat(20) + secret.slice(-4)}</code>
             <div className="row" style={{ gap: 6 }}>
               <button className="btn btn-line btn-sm" onClick={() => setShow(!show)}>
                 <Icon name={show ? "eyeOff" : "eye"} size={14} /> {show ? "Hide" : "Reveal"}
               </button>
-              <span className="keybox-copy"><CopyButton text={key.secret} /></span>
+              <span className="keybox-copy">
+                <CopyButton text={secret} />
+              </span>
             </div>
+          </div>
+        </div>
+      ) : (
+        <div className="keybox">
+          <div className="keybox-row">
+            <span className="spinner" />
           </div>
         </div>
       )}
@@ -430,19 +478,29 @@ function KeysStep({ onBack, onDone }: { onBack: () => void; onDone: () => void }
         {!payment ? (
           <button
             className="btn btn-pine"
-            onClick={() => {
-              const r = simulateStk({ phone: "254700000000", amount: 100, reference: "FIRST-TEST" });
-              if (r.ok) setPaymentId(r.payment.id);
+            onClick={async () => {
+              setError("");
+              try {
+                const p = await api<Payment>("/app/payments", { body: { mode: "test", phone: "254700000000", amount: 100, reference: "FIRST-TEST" } });
+                setPaymentId(p.id);
+              } catch (err) {
+                setError((err as ApiError).message);
+              }
             }}
           >
             <Icon name="play" size={14} /> Send test payment
           </button>
         ) : payment.status === "pending" ? (
-          <span className="badge info"><span className="spinner" style={{ width: 10, height: 10 }} /> Waiting for PIN · {payment.id.slice(0, 14)}</span>
+          <span className="badge info">
+            <span className="spinner" style={{ width: 10, height: 10 }} /> Waiting for PIN · {payment.id.slice(0, 14)}
+          </span>
         ) : (
-          <span className="badge ok">Paid · receipt {payment.receipt}</span>
+          <span className={`badge ${payment.status === "succeeded" ? "ok" : "warn"}`}>
+            {payment.status === "succeeded" ? `Paid · receipt ${payment.mpesa_receipt}` : payment.status}
+          </span>
         )}
       </div>
+      {error && <div className="form-error">{error}</div>}
 
       <div className="onb-actions">
         <button className="btn btn-ghost" onClick={onBack}>

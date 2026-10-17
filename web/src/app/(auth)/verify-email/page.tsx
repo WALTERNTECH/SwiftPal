@@ -3,21 +3,22 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AuthShell, NextSteps } from "@/components/auth/AuthShell";
-import { signOut, useHydrated, useStore, verifyEmail } from "@/lib/store";
+import { api, clearCache, useMe, type ApiError } from "@/lib/api";
 
 export default function VerifyEmail() {
   const router = useRouter();
-  const s = useStore();
-  const hydrated = useHydrated();
+  const { data: me, error } = useMe();
   const [digits, setDigits] = useState(["", "", "", "", "", ""]);
   const [cooldown, setCooldown] = useState(30);
   const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
   const refs = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
-    if (hydrated && !s.account) router.replace("/signup");
-  }, [hydrated, s.account, router]);
+    if (error?.status === 401) router.replace("/signup");
+    if (me?.user.email_verified_at) router.replace(me.merchant.onboarding_done ? "/dashboard" : "/onboarding");
+  }, [error, me, router]);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -29,13 +30,20 @@ export default function VerifyEmail() {
     refs.current[0]?.focus();
   }, []);
 
-  const code = digits.join("");
-
-  function complete(c: string) {
-    if (c.length !== 6) return;
+  async function complete(code: string) {
+    if (code.length !== 6 || busy) return;
     setBusy(true);
-    verifyEmail();
-    setTimeout(() => router.push("/onboarding"), 500);
+    setErr("");
+    try {
+      await api("/app/auth/verify-email", { body: { code } });
+      clearCache();
+      router.push("/onboarding");
+    } catch (e) {
+      setErr((e as ApiError).message);
+      setDigits(["", "", "", "", "", ""]);
+      refs.current[0]?.focus();
+      setBusy(false);
+    }
   }
 
   function setAt(i: number, v: string) {
@@ -61,19 +69,27 @@ export default function VerifyEmail() {
         <div>
           <h1>Check your email</h1>
           <p className="sub">
-            We sent a 6-digit code to <b style={{ color: "var(--ink)" }}>{s.account?.email ?? "your email"}</b>. It expires in 10
-            minutes.
+            We sent a 6-digit code to <b style={{ color: "var(--ink)" }}>{me?.user.email ?? "your email"}</b>. It expires in 10 minutes.
           </p>
         </div>
-        <div className="otp" onPaste={(e) => { e.preventDefault(); setAt(0, e.clipboardData.getData("text")); }}>
+        <div
+          className="otp"
+          onPaste={(e) => {
+            e.preventDefault();
+            setAt(0, e.clipboardData.getData("text"));
+          }}
+        >
           {digits.map((d, i) => (
             <input
               key={i}
-              ref={(el) => { refs.current[i] = el; }}
+              ref={(el) => {
+                refs.current[i] = el;
+              }}
               className="input"
               inputMode="numeric"
               autoComplete={i === 0 ? "one-time-code" : "off"}
               aria-label={`Digit ${i + 1}`}
+              aria-invalid={err ? true : undefined}
               maxLength={6}
               value={d}
               disabled={busy}
@@ -84,23 +100,39 @@ export default function VerifyEmail() {
             />
           ))}
         </div>
-        <button className="btn btn-ink btn-lg btn-block" disabled={code.length !== 6 || busy} onClick={() => complete(code)}>
+        {err && <div className="form-error" role="alert">{err}</div>}
+        <button className="btn btn-ink btn-lg btn-block" disabled={digits.join("").length !== 6 || busy} onClick={() => complete(digits.join(""))}>
           {busy ? <span className="spinner" /> : "Verify email"}
         </button>
         <div className="spread" style={{ fontSize: 13.5 }}>
           <button
             className="btn btn-ghost btn-sm"
             disabled={cooldown > 0}
-            onClick={() => { setCooldown(30); setSent(true); }}
+            onClick={async () => {
+              setErr("");
+              try {
+                await api("/app/auth/resend", { method: "POST" });
+                setNote("A new code is on its way. Check spam if it doesn't arrive.");
+              } catch (e) {
+                setErr((e as ApiError).message);
+              }
+              setCooldown(30);
+            }}
           >
             {cooldown > 0 ? `Resend code in ${cooldown}s` : "Resend code"}
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => { signOut(); router.push("/signup"); }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={async () => {
+              await api("/app/auth/logout", { method: "POST" }).catch(() => {});
+              clearCache();
+              router.push("/signup");
+            }}
+          >
             Use a different email
           </button>
         </div>
-        {sent && <p className="hint">A new code is on its way. Check your spam folder if it doesn&apos;t arrive.</p>}
-        <p className="hint" style={{ textAlign: "center" }}>Preview build: any 6 digits will verify.</p>
+        {note && <p className="hint">{note}</p>}
       </div>
     </AuthShell>
   );

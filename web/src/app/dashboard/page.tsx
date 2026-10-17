@@ -5,30 +5,38 @@ import { useMemo, useState } from "react";
 import { Icon, type IconName } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { AreaChart, CountUp, Delta, kes, Sparkline, SuccessRing } from "@/components/dash/charts";
-import { compare, daily, type Range } from "@/lib/analytics";
-import { maskPhone, money, timeAgo } from "@/lib/format";
-import { useStore } from "@/lib/store";
+import { useToast } from "@/components/dash/ui";
+import { api, invalidate, useAccount, useApi, useMode, usePayments, usePayouts, type Analytics, type Endpoint, type Summary } from "@/lib/api";
+import { dayLabel, delta, maskPhone, money, timeAgo } from "@/lib/format";
+
+type Range = 7 | 14 | 30;
+
+const ZERO: Summary = { collected: 0, paid_out: 0, successful: 0, prompts: 0, settled: 0, success_rate: null, average_ticket: null, fees: 0, payouts: 0, payouts_failed: 0 };
 
 export default function Overview() {
-  const s = useStore();
+  const me = useAccount();
+  const mode = useMode();
+  const toast = useToast();
   const { open, showPayment } = useActions();
   const [range, setRange] = useState<Range>(14);
-  const mode = s.mode;
-  const payments = useMemo(() => s.payments.filter((p) => p.mode === mode), [s.payments, mode]);
-  const payouts = useMemo(() => s.payouts.filter((p) => p.mode === mode), [s.payouts, mode]);
-  const bal = s.balances[mode];
+  const [seeding, setSeeding] = useState(false);
+  const { data: week } = useApi<Analytics>(`/app/analytics?mode=${mode}&days=7`);
+  const { data: span } = useApi<Analytics>(`/app/analytics?mode=${mode}&days=${range}`);
+  const { data: payments = [], loading } = usePayments(mode);
+  const { data: payouts = [] } = usePayouts(mode);
+  const { data: hooks = [] } = useApi<Endpoint[]>(`/app/webhooks?mode=${mode}`);
+  const bal = me.balances[mode];
+  const cur = week?.current ?? ZERO;
+  const prev = week?.previous ?? ZERO;
+  const spark = (k: "collected" | "paid_out" | "successful") => (week?.series ?? []).map((d) => d[k]);
 
-  const days = useMemo(() => daily(payments, payouts, range), [payments, payouts, range]);
-  const week = useMemo(() => daily(payments, payouts, 7), [payments, payouts]);
-  const { cur, prev } = useMemo(() => compare(payments, payouts, 7), [payments, payouts]);
-
-  const verified = s.channels.some((c) => c.status === "verified");
+  const verified = me.channels.some((c) => c.status === "verified");
   const setup = [
-    { done: !!s.business, t: "Business details", href: "/dashboard/settings" },
+    { done: !!me.merchant.industry, t: "Business details", href: "/dashboard/settings" },
     { done: verified, t: "Verify a Till or Paybill", href: "/dashboard/channels" },
-    { done: s.balances.live.fee > 0, t: "Fund fee credit", href: "/dashboard/wallet" },
-    { done: s.webhooks.length > 0, t: "Add a webhook", href: "/dashboard/developers/webhooks" },
-    { done: s.verification === "approved", t: "Account verification", href: "/dashboard/verification" },
+    { done: me.balances.live.fee_credit.available > 0, t: "Fund fee credit", href: "/dashboard/wallet" },
+    { done: hooks.length > 0, t: "Add a webhook", href: "/dashboard/developers/webhooks" },
+    { done: me.merchant.verification_status === "approved", t: "Account verification", href: "/dashboard/verification" },
   ];
   const doneCount = setup.filter((x) => x.done).length;
 
@@ -40,21 +48,21 @@ export default function Overview() {
         icon: "collect",
         tone: p.status === "succeeded" ? "ok" : p.status === "pending" ? "blue" : p.status === "cancelled" ? "warn" : "bad",
         title: p.status === "succeeded" ? `Payment from ${maskPhone(p.phone)}` : p.status === "pending" ? `Prompt sent to ${maskPhone(p.phone)}` : `Payment ${p.status}`,
-        sub: p.receipt ?? p.reference,
+        sub: p.mpesa_receipt ?? p.reference,
         amount: (p.status === "succeeded" ? "+" : "") + money(p.amount),
         in: p.status === "succeeded",
-        at: p.createdAt,
+        at: p.created_at,
         pay: true,
       })),
       ...payouts.slice(0, 6).map<Row>((p) => ({
         id: p.id,
         icon: "payout",
         tone: p.status === "failed" ? "bad" : "blue",
-        title: p.status === "failed" ? "Payout refunded" : `Payout to ${p.recipient ?? maskPhone(p.phone)}`,
-        sub: p.receipt ?? p.reference,
+        title: p.status === "failed" ? "Payout refunded" : `Payout to ${p.recipient_name ?? maskPhone(p.phone)}`,
+        sub: p.mpesa_receipt ?? p.reference,
         amount: `−${money(p.amount)}`,
         in: false,
-        at: p.createdAt,
+        at: p.created_at,
       })),
     ];
     return rows.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 8);
@@ -66,18 +74,30 @@ export default function Overview() {
   })();
 
   const stats = [
-    { label: "Collected", icon: "collect" as IconName, val: cur.collected, fmt: kes, d: (prev.collected ? (cur.collected - prev.collected) / prev.collected : null), spark: week.map((d) => d.collected) },
-    { label: "Paid out", icon: "payout" as IconName, val: cur.paidOut, fmt: kes, d: (prev.paidOut ? (cur.paidOut - prev.paidOut) / prev.paidOut : null), spark: week.map((d) => d.paidOut), blue: true },
-    { label: "Successful payments", icon: "check" as IconName, val: cur.paid, fmt: (n: number) => String(Math.round(n)), d: (prev.paid ? (cur.paid - prev.paid) / prev.paid : null), spark: week.map((d) => d.paid) },
-    { label: "Fees", icon: "receipt" as IconName, val: cur.fees, fmt: (n: number) => `KES ${n.toFixed(2)}`, d: (prev.fees ? (cur.fees - prev.fees) / prev.fees : null), spark: week.map((d) => d.paid), invert: true },
+    { label: "Collected", icon: "collect" as IconName, val: cur.collected, fmt: kes, d: delta(cur.collected, prev.collected), spark: spark("collected") },
+    { label: "Paid out", icon: "payout" as IconName, val: cur.paid_out, fmt: kes, d: delta(cur.paid_out, prev.paid_out), spark: spark("paid_out"), blue: true },
+    { label: "Successful payments", icon: "check" as IconName, val: cur.successful, fmt: (n: number) => String(Math.round(n)), d: delta(cur.successful, prev.successful), spark: spark("successful") },
+    { label: "Fees", icon: "receipt" as IconName, val: cur.fees, fmt: (n: number) => `KES ${n.toFixed(2)}`, d: delta(cur.fees, prev.fees), spark: spark("successful"), invert: true },
   ];
+
+  async function seed() {
+    setSeeding(true);
+    try {
+      await api("/app/sandbox/seed", { method: "POST" });
+      invalidate("/app/");
+      toast("Sample history loaded");
+    } catch (err) {
+      toast((err as Error).message, "alert");
+    }
+    setSeeding(false);
+  }
 
   return (
     <>
       <div className="page-header rise">
         <div>
           <h1>
-            {greeting}, {s.account?.firstName}
+            {greeting}, {me.user.first_name}
           </h1>
           <p className="muted">{mode === "test" ? "Sandbox" : "Live"} · last 7 days compared with the 7 before</p>
         </div>
@@ -105,17 +125,20 @@ export default function Overview() {
               <span>Fee credit</span>
               <div className="bal-amt">
                 <small>KES</small>
-                <CountUp value={bal.fee} format={(n) => n.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
+                <CountUp value={bal.fee_credit.available} format={(n) => n.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
               </div>
-              <div className="bal-meta">≈ {Math.floor(bal.fee / 2.5).toLocaleString()} paid prompts</div>
+              <div className="bal-meta">
+                ≈ {Math.floor(bal.fee_credit.available / 2.5).toLocaleString()} paid prompts
+                {bal.fee_credit.held > 0 && ` · ${money(bal.fee_credit.held)} held`}
+              </div>
             </div>
             <div className="bal-item">
               <span>Payout float</span>
               <div className="bal-amt">
                 <small>KES</small>
-                <CountUp value={bal.float} format={(n) => n.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
+                <CountUp value={bal.payout_float.available} format={(n) => n.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
               </div>
-              <div className="bal-meta">withdrawable</div>
+              <div className="bal-meta">withdrawable{bal.payout_float.held > 0 && ` · ${money(bal.payout_float.held)} held`}</div>
             </div>
           </div>
           <div className="bal-actions">
@@ -188,8 +211,8 @@ export default function Overview() {
             <div>
               <h3>Volume</h3>
               <div className="legend" style={{ marginTop: 4 }}>
-                <span><i className="swatch s1" /> Collected <b>{money(days.reduce((a, d) => a + d.collected, 0))}</b></span>
-                <span><i className="swatch s2" /> Paid out <b>{money(days.reduce((a, d) => a + d.paidOut, 0))}</b></span>
+                <span><i className="swatch s1" /> Collected <b>{money(span?.current.collected ?? 0)}</b></span>
+                <span><i className="swatch s2" /> Paid out <b>{money(span?.current.paid_out ?? 0)}</b></span>
               </div>
             </div>
             <div className="range" role="group" aria-label="Range">
@@ -200,19 +223,28 @@ export default function Overview() {
               ))}
             </div>
           </div>
-          {payments.length ? (
+          {span && payments.length ? (
             <AreaChart
               key={range}
-              labels={days.map((d) => d.label)}
+              labels={span.series.map((d) => dayLabel(d.date))}
               series={[
-                { key: "c", label: "Collected", cls: "s1", values: days.map((d) => d.collected) },
-                { key: "p", label: "Paid out", cls: "s2", values: days.map((d) => d.paidOut) },
+                { key: "c", label: "Collected", cls: "s1", values: span.series.map((d) => d.collected) },
+                { key: "p", label: "Paid out", cls: "s2", values: span.series.map((d) => d.paid_out) },
               ]}
             />
+          ) : loading || !span ? (
+            <div className="empty">
+              <span className="spinner" />
+            </div>
           ) : (
             <div className="empty">
               <b>No activity yet</b>
-              <p className="muted">{mode === "live" ? "Live payments appear here." : "Send a test STK Push to see it here."}</p>
+              <p className="muted">{mode === "live" ? "Live payments appear here." : "Send a test STK Push, or load sixty days of sample history."}</p>
+              {mode === "test" && (
+                <button className="btn btn-line btn-sm" onClick={seed} disabled={seeding}>
+                  {seeding ? <span className="spinner" /> : "Load sample history"}
+                </button>
+              )}
             </div>
           )}
         </section>
@@ -223,7 +255,7 @@ export default function Overview() {
             <Link href="/dashboard/analytics" className="link" style={{ fontSize: 12.5 }}>Analytics</Link>
           </div>
           <div className="panel-body" style={{ display: "grid", gap: 18, justifyItems: "center" }}>
-            <SuccessRing rate={cur.rate} />
+            <SuccessRing rate={cur.success_rate} />
             <dl className="mini-stats" style={{ width: "100%", gridTemplateColumns: "1fr 1fr", boxShadow: "none" }}>
               <div>
                 <dt>Prompts</dt>
@@ -231,7 +263,7 @@ export default function Overview() {
               </div>
               <div>
                 <dt>Avg ticket</dt>
-                <dd>{cur.avgTicket ? kes(cur.avgTicket) : "—"}</dd>
+                <dd>{cur.average_ticket ? kes(cur.average_ticket) : "—"}</dd>
               </div>
             </dl>
           </div>
@@ -263,7 +295,7 @@ export default function Overview() {
           </div>
         ) : (
           <div className="empty">
-            <p className="muted">Nothing yet.</p>
+            <p className="muted">{loading ? "Loading…" : "Nothing yet."}</p>
           </div>
         )}
       </section>

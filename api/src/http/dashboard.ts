@@ -57,6 +57,19 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
         return { user };
       });
 
+      r.post("/auth/forgot", async (req) => {
+        const b = parse(z.object({ email: z.string().max(200) }), req.body);
+        await accounts.requestReset(app, b.email);
+        return { ok: true };
+      });
+
+      r.post("/auth/reset", async (req, reply) => {
+        const b = parse(z.object({ token: z.string().min(20).max(100), password: z.string().min(10).max(200) }), req.body);
+        const { user, session } = await accounts.resetPassword(app, b.token, b.password, req.ip, req.headers["user-agent"]);
+        setCookie(app, reply, session, 30 * 86400);
+        return { user };
+      });
+
       r.post("/auth/logout", async (req, reply) => {
         await accounts.signOut(app, cookieOf(req));
         setCookie(app, reply, "", 0);
@@ -95,6 +108,14 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
             channels: (await channels.listChannels(app, m.id)).map(channels.presentChannel),
             verification: await verification.current(app, m.id),
             live_available: !!app.mpesa.live,
+            pending: Object.fromEntries(
+              (
+                await app.db.query<{ mode: string; n: number }>(
+                  `select mode, count(*)::int as n from payments where merchant_id = $1 and purpose = 'charge' and status in ('pending','confirming') group by mode`,
+                  [m.id],
+                )
+              ).rows.map((r) => [r.mode, Number(r.n)]),
+            ),
           };
         });
 
@@ -209,8 +230,16 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
 
         // ---------- payments and payouts ----------
         s.get("/payments", async (req) => {
-          const q = req.query as { status?: string; q?: string; limit?: string };
-          return (await listPayments(app, req.user!.merchant_id, modeOf(req), { status: q.status, q: q.q, limit: Number(q.limit ?? 100) })).map(presentPayment);
+          const q = req.query as { status?: string; q?: string; limit?: string; before?: string };
+          return (await listPayments(app, req.user!.merchant_id, modeOf(req), { status: q.status, q: q.q, before: q.before, limit: Number(q.limit ?? 100) })).map(presentPayment);
+        });
+        s.get("/payments/counts", async (req) => {
+          const { rows } = await app.db.query<{ status: string; n: number }>(
+            `select status, count(*)::int as n from payments where merchant_id = $1 and mode = $2 and purpose = 'charge' group by status`,
+            [req.user!.merchant_id, modeOf(req)],
+          );
+          const n = (...s: string[]) => rows.filter((r) => s.includes(r.status)).reduce((a, r) => a + Number(r.n), 0);
+          return { all: n("pending", "confirming", "succeeded", "failed", "cancelled", "expired"), succeeded: n("succeeded"), pending: n("pending", "confirming"), unpaid: n("failed", "cancelled", "expired") };
         });
         s.get("/payments/:id", async (req) => {
           const p = await getPayment(app, req.user!.merchant_id, (req.params as { id: string }).id);
@@ -226,8 +255,18 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
           return reply.code(201).send(presentPayment(await createStk(app, await merchant(req), mode, input)));
         });
         s.get("/payouts", async (req) => {
-          const q = req.query as { q?: string; limit?: string };
-          return (await listPayouts(app, req.user!.merchant_id, modeOf(req), { q: q.q, limit: Number(q.limit ?? 100) })).map(presentPayout);
+          const q = req.query as { q?: string; limit?: string; before?: string };
+          return (await listPayouts(app, req.user!.merchant_id, modeOf(req), { q: q.q, before: q.before, limit: Number(q.limit ?? 100) })).map(presentPayout);
+        });
+        s.get("/payouts/summary", async (req) => {
+          const r = await app.db.query<{ sent: number; paid_out: string; failed: number }>(
+            `select count(*) filter (where status = 'succeeded')::int as sent, coalesce(sum(amount) filter (where status = 'succeeded'), 0) as paid_out,
+                    count(*) filter (where status in ('failed','reversed'))::int as failed
+             from payouts where merchant_id = $1 and mode = $2 and purpose = 'payout'`,
+            [req.user!.merchant_id, modeOf(req)],
+          );
+          const row = r.rows[0];
+          return { sent: Number(row?.sent ?? 0), paid_out: Number(row?.paid_out ?? 0), failed: Number(row?.failed ?? 0) };
         });
         s.post("/payouts", async (req, reply) => {
           const b = parse(

@@ -200,7 +200,7 @@ export async function reconcilePayouts(app: App) {
   for (const r of rows) await settle(app, r.id, { ok: false, code: "timeout", message: "No result from the sandbox" });
 }
 
-export async function listPayouts(app: App, merchantId: string, mode: Mode, f: { q?: string; limit?: number; batch?: string }) {
+export async function listPayouts(app: App, merchantId: string, mode: Mode, f: { q?: string; limit?: number; batch?: string; before?: string }) {
   const params: unknown[] = [merchantId, mode];
   let where = `merchant_id = $1 and mode = $2 and purpose = 'payout'`;
   if (f.batch) {
@@ -210,6 +210,10 @@ export async function listPayouts(app: App, merchantId: string, mode: Mode, f: {
   if (f.q) {
     params.push(`%${f.q.toLowerCase()}%`);
     where += ` and (lower(reference) like $${params.length} or phone like $${params.length} or lower(coalesce(recipient_name,'')) like $${params.length} or lower(coalesce(mpesa_receipt,'')) like $${params.length})`;
+  }
+  if (f.before) {
+    params.push(f.before);
+    where += ` and created_at < (select created_at from payouts where id = $${params.length})`;
   }
   params.push(Math.min(f.limit ?? 50, 200));
   const { rows } = await app.db.query<Payout>(`select * from payouts where ${where} order by created_at desc limit $${params.length}`, params);

@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "@/components/Icon";
-import type { PayStatus, PayoutStatus } from "@/lib/store";
+import type { PayStatus, PayoutStatus } from "@/lib/api";
 
 // ---------- page header ----------
 export function PageHeader({ title, sub, actions }: { title: string; sub?: ReactNode; actions?: ReactNode }) {
@@ -29,6 +29,7 @@ const PO: Record<PayoutStatus, [string, string]> = {
   processing: ["info", "Processing"],
   succeeded: ["ok", "Delivered"],
   failed: ["bad", "Failed · refunded"],
+  reversed: ["warn", "Reversed"],
 };
 export function PayBadge({ s }: { s: PayStatus }) {
   const [cls, label] = PAY[s];

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { AuthShell, NextSteps } from "@/components/auth/AuthShell";
 import { PasswordInput, passwordScore } from "@/components/auth/PasswordInput";
 import { normalisePhone } from "@/lib/format";
-import { signUp } from "@/lib/store";
+import { api, clearCache, type ApiError } from "@/lib/api";
 
 type Errors = Partial<Record<"firstName" | "lastName" | "email" | "phone" | "password" | "terms", string>>;
 
@@ -34,19 +34,29 @@ export default function SignUp() {
     return e;
   }
 
-  function submit(ev: React.FormEvent) {
+  const [formError, setFormError] = useState("");
+
+  async function submit(ev: React.FormEvent) {
     ev.preventDefault();
     const e = validate();
     setErrors(e);
+    setFormError("");
     if (Object.keys(e).length) return;
     setBusy(true);
-    signUp({
-      firstName: f.firstName.trim(),
-      lastName: f.lastName.trim(),
-      email: f.email.trim().toLowerCase(),
-      phone: normalisePhone(f.phone)!,
-    });
-    setTimeout(() => router.push("/verify-email"), 400);
+    try {
+      clearCache();
+      await api("/app/auth/signup", {
+        body: { first_name: f.firstName.trim(), last_name: f.lastName.trim(), email: f.email.trim().toLowerCase(), phone: normalisePhone(f.phone), password: f.password },
+      });
+      router.push("/verify-email");
+    } catch (err) {
+      const x = err as ApiError;
+      if (x.code === "email_taken") setErrors({ email: x.message });
+      else if (x.code === "invalid_phone") setErrors({ phone: x.message });
+      else if (x.code === "weak_password") setErrors({ password: x.message });
+      else setFormError(x.message);
+      setBusy(false);
+    }
   }
 
   return (
@@ -107,6 +117,8 @@ export default function SignUp() {
           </label>
           {errors.terms && <span className="error-text">{errors.terms}</span>}
         </div>
+
+        {formError && <div className="form-error" role="alert">{formError}</div>}
 
         <button className="btn btn-ink btn-lg btn-block" disabled={busy}>
           {busy ? <span className="spinner" /> : "Create account"}

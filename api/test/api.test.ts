@@ -46,6 +46,21 @@ describe("accounts", () => {
     assert.equal(login.statusCode, 401);
   });
 
+  it("resets a password with a one-time link and signs out old sessions", async () => {
+    const m = await merchant(c);
+    const silent = await c.api.inject({ method: "POST", url: "/app/auth/forgot", payload: { email: "nobody@example.co.ke" } });
+    assert.equal(silent.statusCode, 200);
+    await c.api.inject({ method: "POST", url: "/app/auth/forgot", payload: { email: m.email } });
+    const link = c.mails.filter((x) => x.to === m.email).at(-1)!.text.match(/token=([A-Za-z0-9_-]+)/)![1];
+    const res = await c.api.inject({ method: "POST", url: "/app/auth/reset", payload: { token: link, password: "a-brand-new-password" } });
+    assert.equal(res.statusCode, 200);
+    assert.equal((await m.dash("GET", "/app/me")).statusCode, 401);
+    const again = await c.api.inject({ method: "POST", url: "/app/auth/reset", payload: { token: link, password: "another-new-password" } });
+    assert.equal(again.json().error.code, "invalid_reset_link");
+    const login = await c.api.inject({ method: "POST", url: "/app/auth/login", payload: { email: m.email, password: "a-brand-new-password" } });
+    assert.equal(login.statusCode, 200);
+  });
+
   it("refuses state changes without the CSRF header", async () => {
     const m = await merchant(c);
     const res = await c.api.inject({ method: "POST", url: "/app/sandbox/reset", headers: { cookie: m.cookie } });

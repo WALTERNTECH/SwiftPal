@@ -33,7 +33,8 @@
   .onb-rail { display: flex; gap: 16px; padding: 16px var(--gutter); border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
   .onb-rail li { padding: 0; white-space: nowrap; }
   .onb-rail li::after { display: none; }
-  .onb-rail span { display: none; }
+  .onb-rail li > div span { display: none; }
+  .onb-rail li { align-items: center; }
   .onb-main { padding: 28px var(--gutter) 64px; }
   .onb-split { grid-template-columns: 1fr; }
   .onb-phone { order: -1; }

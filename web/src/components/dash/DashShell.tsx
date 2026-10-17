@@ -6,28 +6,34 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { Icon, type IconName } from "@/components/Icon";
 import { LogoMark } from "@/components/Logo";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
+import { api, clearCache, invalidate, setMode, useAccount, useApi, useMe, useMode, usePayments, usePayouts, type Me } from "@/lib/api";
 import { money, timeAgo } from "@/lib/format";
-import { resetPrototype, setMode, signOut, useHydrated, useStore } from "@/lib/store";
 import { ActionsProvider, useActions, type Action } from "./actions";
 import { CommandPalette } from "./CommandPalette";
 import { currentItem, isActive, NAV } from "./nav";
-import { ToastHost } from "./ui";
+import { ToastHost, useToast } from "./ui";
 
 export function DashShell({ children }: { children: ReactNode }) {
-  const s = useStore();
-  const hydrated = useHydrated();
+  const { data: me, error, reload } = useMe();
   const router = useRouter();
+  // Keeps sidebar counts and balances current while the tab is open.
+  useApi<Me>("/app/me", { refreshMs: 30_000 });
 
   useEffect(() => {
-    if (!hydrated) return;
-    if (!s.signedIn || !s.account) router.replace("/login");
-    else if (!s.account.emailVerified) router.replace("/verify-email");
-  }, [hydrated, s.signedIn, s.account, router]);
+    if (error?.status === 401) router.replace("/login");
+    else if (me && !me.user.email_verified_at) router.replace("/verify-email");
+  }, [error, me, router]);
 
-  if (!hydrated || !s.signedIn || !s.account) {
+  if (!me || !me.user.email_verified_at) {
     return (
       <div className="dash-loading">
         <LogoMark size={34} />
+        {error && error.status !== 401 && (
+          <div className="stack" style={{ gap: 10, justifyItems: "center", marginTop: 18 }}>
+            <span className="muted">{error.message}</span>
+            <button className="btn btn-line btn-sm" onClick={() => reload()}>Try again</button>
+          </div>
+        )}
       </div>
     );
   }
@@ -42,11 +48,10 @@ export function DashShell({ children }: { children: ReactNode }) {
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  const s = useStore();
   const path = usePathname();
   const [navOpen, setNavOpen] = useState(false);
   const [cmdk, setCmdk] = useState(false);
-  const test = s.mode === "test";
+  const test = useMode() === "test";
 
   useEffect(() => setNavOpen(false), [path]);
   useEffect(() => {
@@ -98,18 +103,22 @@ const VERIFY: Record<string, { label: string; tone: string }> = {
   not_started: { label: "Required", tone: "warn" },
   submitted: { label: "In review", tone: "info" },
   approved: { label: "Verified", tone: "ok" },
+  rejected: { label: "Action needed", tone: "bad" },
 };
 
 function Sidebar({ open }: { open: boolean }) {
-  const s = useStore();
+  const me = useAccount();
+  const mode = useMode();
+  const toast = useToast();
   const path = usePathname();
-  const router = useRouter();
   const navRef = useRef<HTMLElement>(null);
   const [bar, setBar] = useState<{ top: number; height: number } | null>(null);
-  const pending = s.payments.filter((p) => p.mode === s.mode && p.status === "pending").length;
-  const unverifiedChannels = s.channels.filter((c) => c.status !== "verified").length;
-  const v = VERIFY[s.verification];
-  const initials = (s.business?.name || `${s.account?.firstName} ${s.account?.lastName}`)
+  const [resetting, setResetting] = useState(false);
+  const pending = me.pending[mode] ?? 0;
+  const unverifiedChannels = me.channels.filter((c) => c.status !== "verified").length;
+  const vs = me.merchant.verification_status;
+  const v = VERIFY[vs];
+  const initials = me.merchant.name
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
@@ -141,18 +150,18 @@ function Sidebar({ open }: { open: boolean }) {
         <div className="side-org">
           <span className="side-org-av">{initials || "SP"}</span>
           <div className="grow">
-            <b>{s.business?.name || `${s.account?.firstName} ${s.account?.lastName}`}</b>
-            <span>{s.business?.type === "individual" ? "Individual" : s.business?.type === "ngo" ? "Organisation" : "Business"}</span>
+            <b>{me.merchant.name}</b>
+            <span>{me.merchant.type === "individual" ? "Individual" : me.merchant.type === "ngo" ? "Organisation" : "Business"}</span>
           </div>
         </div>
         <div className="mode-seg" role="group" aria-label="Mode">
-          <button aria-pressed={s.mode === "test"} className="t" onClick={() => setMode("test")}>
+          <button aria-pressed={mode === "test"} className="t" onClick={() => setMode("test")}>
             Test
           </button>
-          <button aria-pressed={s.mode === "live"} className="l" onClick={() => setMode("live")}>
+          <button aria-pressed={mode === "live"} className="l" onClick={() => setMode("live")}>
             Live
           </button>
-          <i className={`mode-thumb ${s.mode}`} />
+          <i className={`mode-thumb ${mode}`} />
         </div>
       </div>
 
@@ -173,32 +182,41 @@ function Sidebar({ open }: { open: boolean }) {
       </nav>
 
       <div className="side-foot">
-        {s.verification !== "approved" && (
+        {vs !== "approved" && (
           <Link href="/dashboard/verification" className="side-verify">
-            <span className={`ring ${s.verification}`}>
-              <Icon name={s.verification === "submitted" ? "clock" : "idcard"} size={15} />
+            <span className={`ring ${vs}`}>
+              <Icon name={vs === "submitted" ? "clock" : "idcard"} size={15} />
             </span>
             <span className="grow">
-              <b>{s.verification === "submitted" ? "Verification in review" : "Verify your account"}</b>
-              <span>{s.verification === "submitted" ? "We'll email you" : "National ID and selfie"}</span>
+              <b>{vs === "submitted" ? "Verification in review" : vs === "rejected" ? "Resubmit verification" : "Verify your account"}</b>
+              <span>{vs === "submitted" ? "We'll email you" : vs === "rejected" ? "See what needs changing" : "National ID and selfie"}</span>
             </span>
             <Icon name="chevronRight" size={14} />
           </Link>
         )}
         <div className="side-row">
           <ThemeSwitch label={false} />
-          <button
-            className="side-reset"
-            title="Reset preview data"
-            onClick={() => {
-              if (confirm("Clear all preview data in this browser and start over?")) {
-                resetPrototype();
-                router.push("/");
-              }
-            }}
-          >
-            Preview · reset
-          </button>
+          {mode === "test" && (
+            <button
+              className="side-reset"
+              title="Clear test payments, payouts, logs and webhook deliveries, and refill test balances"
+              disabled={resetting}
+              onClick={async () => {
+                if (!confirm("Clear all test-mode data and refill the test balances? Live data isn't touched.")) return;
+                setResetting(true);
+                try {
+                  await api("/app/sandbox/reset", { method: "POST" });
+                  invalidate("/app/");
+                  toast("Sandbox reset");
+                } catch (err) {
+                  toast((err as Error).message, "alert");
+                }
+                setResetting(false);
+              }}
+            >
+              {resetting ? "Resetting…" : "Reset sandbox"}
+            </button>
+          )}
         </div>
       </div>
     </aside>
@@ -214,10 +232,13 @@ const NEW_ITEMS: { a: Action; label: string; icon: IconName }[] = [
 ];
 
 function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void }) {
-  const s = useStore();
+  const me = useAccount();
+  const mode = useMode();
   const path = usePathname();
   const router = useRouter();
   const { open } = useActions();
+  const { data: payments } = usePayments(mode);
+  const { data: payouts } = usePayouts(mode);
   const [menu, setMenu] = useState<"new" | "bell" | "me" | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const item = currentItem(path);
@@ -232,21 +253,22 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
 
   const notes = useMemo(() => {
     const out: { icon: IconName; tone: string; text: string; at: string; href: string }[] = [];
-    const bal = s.balances[s.mode];
-    if (bal.fee < s.lowBalanceAt) out.push({ icon: "alert", tone: "warn", text: `Fee credit is ${money(Math.floor(bal.fee))}`, at: new Date().toISOString(), href: "/dashboard/wallet" });
-    if (s.verification === "not_started") out.push({ icon: "idcard", tone: "warn", text: "Verify your account to enable live payouts", at: s.account!.createdAt, href: "/dashboard/verification" });
-    s.payouts
-      .filter((p) => p.mode === s.mode && p.status === "failed")
+    const fee = me.balances[mode].fee_credit.available;
+    if (fee < me.merchant.low_balance_at) out.push({ icon: "alert", tone: "warn", text: `Fee credit is ${money(Math.floor(fee))}`, at: new Date().toISOString(), href: "/dashboard/wallet" });
+    if (me.merchant.verification_status === "not_started") out.push({ icon: "idcard", tone: "warn", text: "Verify your account to enable live payouts", at: me.user.created_at, href: "/dashboard/verification" });
+    if (me.merchant.verification_status === "rejected") out.push({ icon: "idcard", tone: "bad", text: "Your verification needs changes", at: me.verification?.reviewed_at ?? me.user.created_at, href: "/dashboard/verification" });
+    (payouts ?? [])
+      .filter((p) => p.status === "failed")
       .slice(0, 2)
-      .forEach((p) => out.push({ icon: "payout", tone: "bad", text: `Payout ${money(p.amount)} failed and was refunded`, at: p.createdAt, href: "/dashboard/payouts" }));
-    s.payments
-      .filter((p) => p.mode === s.mode && p.status === "succeeded")
+      .forEach((p) => out.push({ icon: "payout", tone: "bad", text: `Payout ${money(p.amount)} failed and was refunded`, at: p.completed_at ?? p.created_at, href: "/dashboard/payouts" }));
+    (payments ?? [])
+      .filter((p) => p.status === "succeeded")
       .slice(0, 3)
-      .forEach((p) => out.push({ icon: "collect", tone: "ok", text: `${money(p.amount)} received · ${p.reference}`, at: p.createdAt, href: "/dashboard/payments" }));
+      .forEach((p) => out.push({ icon: "collect", tone: "ok", text: `${money(p.amount)} received · ${p.reference}`, at: p.completed_at ?? p.created_at, href: "/dashboard/payments" }));
     return out.slice(0, 6);
-  }, [s]);
+  }, [me, mode, payments, payouts]);
 
-  const initials = `${s.account?.firstName[0] ?? ""}${s.account?.lastName[0] ?? ""}`.toUpperCase() || "SP";
+  const initials = `${me.user.first_name[0] ?? ""}${me.user.last_name[0] ?? ""}`.toUpperCase() || "SP";
 
   return (
     <header className="topbar" ref={wrap}>
@@ -274,7 +296,7 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
               {NEW_ITEMS.map((n) => (
                 <button key={n.a} role="menuitem" onClick={() => { setMenu(null); open(n.a); }}>
                   <span className="pop-ic"><Icon name={n.icon} size={14} /></span>
-                  {n.a === "payment" && s.mode === "test" ? "Send test STK Push" : n.label}
+                  {n.a === "payment" && mode === "test" ? "Send test STK Push" : n.label}
                 </button>
               ))}
             </div>
@@ -308,12 +330,19 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
           {menu === "me" && (
             <div className="pop" role="menu">
               <div className="pop-head">
-                <b>{s.account?.firstName} {s.account?.lastName}</b>
-                <span>{s.account?.email}</span>
+                <b>{me.user.first_name} {me.user.last_name}</b>
+                <span>{me.user.email}</span>
               </div>
               <Link href="/dashboard/settings" role="menuitem"><span className="pop-ic"><Icon name="settings" size={14} /></span>Settings</Link>
               <Link href="/docs" role="menuitem"><span className="pop-ic"><Icon name="book" size={14} /></span>Documentation</Link>
-              <button role="menuitem" onClick={() => { signOut(); router.push("/login"); }}>
+              <button
+                role="menuitem"
+                onClick={async () => {
+                  await api("/app/auth/logout", { method: "POST" }).catch(() => {});
+                  clearCache();
+                  router.push("/login");
+                }}
+              >
                 <span className="pop-ic"><Icon name="logout" size={14} /></span>Sign out
               </button>
             </div>

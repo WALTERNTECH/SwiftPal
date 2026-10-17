@@ -40,3 +40,11 @@ export function dateTime(iso: string) {
     hour12: false,
   });
 }
+
+/** "2026-10-17" (a Nairobi calendar day from the API) → "17 Oct". */
+export const dayLabel = (date: string) => new Date(`${date}T12:00:00+03:00`).toLocaleDateString("en-KE", { day: "numeric", month: "short", timeZone: "Africa/Nairobi" });
+
+export function delta(cur: number | null, prev: number | null): number | null {
+  if (cur === null || prev === null || prev === 0) return null;
+  return (cur - prev) / prev;
+}

@@ -245,6 +245,7 @@ create table request_logs (
 );
 create index request_logs_merchant on request_logs(merchant_id, mode, created_at desc);
 
+
 create table verifications (
   id text primary key,
   merchant_id text not null references merchants(id),
@@ -285,6 +286,19 @@ create table daraja_callbacks (
   outcome text,
   received_at timestamptz not null default now()
 );
+`,
+  },
+  {
+    id: "002_password_resets",
+    sql: `
+create table password_resets (
+  token_hash text primary key,
+  user_id text not null references users(id),
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index password_resets_user on password_resets(user_id);
 `,
   },
 ];

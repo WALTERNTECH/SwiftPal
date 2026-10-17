@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/Icon";
 import { maskPhone, money } from "@/lib/format";
-import { setMode, useStore } from "@/lib/store";
+import { setMode, useMode, usePayments } from "@/lib/api";
 import { useActions, type Action } from "./actions";
 import { ALL_ITEMS } from "./nav";
 
@@ -12,7 +12,8 @@ type Row = { id: string; group: string; label: string; hint?: string; icon: Icon
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
-  const s = useStore();
+  const mode = useMode();
+  const { data: payments } = usePayments(mode);
   const { open: openAction, showPayment } = useActions();
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
@@ -30,7 +31,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const rows = useMemo<Row[]>(() => {
     const act = (a: Action) => () => openAction(a);
     const all: Row[] = [
-      { id: "a-pay", group: "Actions", label: s.mode === "test" ? "Send test STK Push" : "Request payment", icon: "collect", run: act("payment"), keywords: "stk new charge" },
+      { id: "a-pay", group: "Actions", label: mode === "test" ? "Send test STK Push" : "Request payment", icon: "collect", run: act("payment"), keywords: "stk new charge" },
       { id: "a-po", group: "Actions", label: "Send payout", icon: "payout", run: act("payout"), keywords: "b2c disburse" },
       { id: "a-tf", group: "Actions", label: "Top up fee credit", icon: "plus", run: act("topup-fee"), keywords: "fund wallet" },
       { id: "a-tp", group: "Actions", label: "Top up payout float", icon: "plus", run: act("topup-float"), keywords: "fund wallet" },
@@ -39,9 +40,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       {
         id: "a-mode",
         group: "Actions",
-        label: s.mode === "test" ? "Switch to live mode" : "Switch to test mode",
+        label: mode === "test" ? "Switch to live mode" : "Switch to test mode",
         icon: "sandbox",
-        run: () => setMode(s.mode === "test" ? "live" : "test"),
+        run: () => setMode(mode === "test" ? "live" : "test"),
         keywords: "sandbox live test toggle",
       },
       ...ALL_ITEMS.map((i) => ({
@@ -57,8 +58,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const needle = q.trim().toLowerCase();
     if (!needle) return all;
     const match = all.filter((r) => `${r.label} ${r.keywords ?? ""} ${r.hint ?? ""}`.toLowerCase().includes(needle));
-    const found = s.payments
-      .filter((p) => p.mode === s.mode && [p.reference, p.phone, p.receipt ?? "", p.id].some((v) => v.toLowerCase().includes(needle)))
+    const found = (payments ?? [])
+      .filter((p) => [p.reference, p.phone, p.mpesa_receipt ?? "", p.id].some((v) => v.toLowerCase().includes(needle)))
       .slice(0, 6)
       .map<Row>((p) => ({
         id: p.id,
@@ -69,7 +70,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         run: () => showPayment(p.id),
       }));
     return [...match, ...found];
-  }, [q, s.mode, s.payments, openAction, showPayment, router]);
+  }, [q, mode, payments, openAction, showPayment, router]);
 
   useEffect(() => setSel(0), [q]);
   useEffect(() => {

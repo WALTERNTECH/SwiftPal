@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { PageHeader, useToast } from "@/components/dash/ui";
+import { api, invalidate, useAccount, type ApiError } from "@/lib/api";
 import { dateTime } from "@/lib/format";
-import { approveVerification, submitVerification, useStore } from "@/lib/store";
 
 type Kind = "individual" | "business";
 type Doc = { key: string; label: string; art: "front" | "back" | "selfie" | "doc"; selfie?: boolean };
@@ -25,27 +25,33 @@ const DOCS: Record<Kind, Doc[]> = {
 
 const STEPS = ["Account type", "Details", "Documents", "Review"];
 
+const MAX_BYTES = 10 * 1024 * 1024;
+type Picked = { file: File; url: string | null };
+
 export default function Verification() {
-  const s = useStore();
-  if (s.verification === "submitted" || s.verification === "approved") return <Status />;
+  const me = useAccount();
+  const vs = me.merchant.verification_status;
+  if (vs === "submitted" || vs === "approved") return <Status />;
   return <Wizard />;
 }
 
 function Wizard() {
-  const s = useStore();
+  const me = useAccount();
   const toast = useToast();
   const [step, setStep] = useState(0);
-  const [kind, setKind] = useState<Kind>(s.business?.type === "individual" ? "individual" : "business");
+  const [kind, setKind] = useState<Kind>(me.merchant.type === "individual" ? "individual" : "business");
   const [f, setF] = useState({
-    name: `${s.account?.firstName ?? ""} ${s.account?.lastName ?? ""}`.trim(),
+    name: `${me.user.first_name} ${me.user.last_name}`.trim(),
     idNumber: "",
-    company: s.business?.type !== "individual" ? s.business?.name ?? "" : "",
+    company: me.merchant.type !== "individual" ? me.merchant.name : "",
     regNumber: "",
     kraPin: "",
   });
-  const [files, setFiles] = useState<Record<string, { name: string; url: string | null }>>({});
+  const [files, setFiles] = useState<Record<string, Picked>>({});
   const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const rejected = me.merchant.verification_status === "rejected" ? me.verification : null;
   const docs = DOCS[kind];
 
   // Previews are object URLs; release them when the page goes away, not on every change.
@@ -74,9 +80,43 @@ function Wizard() {
     ...docs.map((d) => ({ t: d.label, ok: !!files[d.key] })),
   ];
 
+  async function submit() {
+    setBusy(true);
+    setError("");
+    const form = new FormData();
+    form.set("kind", kind);
+    form.set("name", f.name.trim());
+    form.set("id_number", f.idNumber);
+    if (kind === "business") {
+      form.set("reg_number", f.regNumber.trim());
+      form.set("kra_pin", f.kraPin);
+    }
+    for (const d of docs) form.set(d.key, files[d.key].file, files[d.key].file.name);
+    try {
+      if (kind === "business" && f.company.trim() && f.company.trim() !== me.merchant.name) {
+        await api("/app/merchant", { method: "PATCH", body: { name: f.company.trim() } });
+      }
+      await api("/app/verification", { form });
+      invalidate("/app/me", "/app/verification");
+      toast("Submitted for review");
+    } catch (err) {
+      setError((err as ApiError).message);
+    }
+    setBusy(false);
+  }
+
   return (
     <>
       <PageHeader title="Verification" sub={kind === "individual" ? "National ID and a selfie holding it." : "Company documents and a director's ID."} />
+
+      {rejected && (
+        <div className="callout warn rise">
+          <Icon name="alert" size={16} />
+          <span>
+            <b>Your last submission needs changes.</b> {rejected.reviewer_note ?? "Check the details and photos, then submit again."}
+          </span>
+        </div>
+      )}
 
       <div className="vf">
         <section className="panel rise">
@@ -142,7 +182,19 @@ function Wizard() {
             {step === 2 && (
               <div className="uploads rise">
                 {docs.map((d) => (
-                  <UploadTile key={d.key} doc={d} file={files[d.key]} onPick={(file) => setFiles((x) => ({ ...x, [d.key]: file }))} />
+                  <UploadTile
+                    key={d.key}
+                    doc={d}
+                    file={files[d.key]}
+                    onPick={(file) => {
+                      if (file.size > MAX_BYTES) return setError(`${d.label} is larger than 10 MB.`);
+                      setError("");
+                      setFiles((x) => {
+                        if (x[d.key]?.url) URL.revokeObjectURL(x[d.key].url!);
+                        return { ...x, [d.key]: { file, url: file.type.startsWith("image/") ? URL.createObjectURL(file) : null } };
+                      });
+                    }}
+                  />
                 ))}
               </div>
             )}
@@ -190,22 +242,8 @@ function Wizard() {
                 Continue <Icon name="arrowRight" size={14} className="arrow" />
               </button>
             ) : (
-              <button
-                className="btn btn-pine"
-                disabled={!confirm}
-                onClick={() => {
-                  submitVerification({
-                    kind,
-                    name: kind === "business" ? f.company : f.name,
-                    idNumber: f.idNumber,
-                    regNumber: kind === "business" ? f.regNumber : undefined,
-                    kraPin: kind === "business" ? f.kraPin : undefined,
-                    files: Object.fromEntries(Object.entries(files).map(([k, v]) => [k, v.name])),
-                  });
-                  toast("Submitted for review");
-                }}
-              >
-                Submit for review
+              <button className="btn btn-pine" disabled={!confirm || busy} onClick={submit}>
+                {busy ? <span className="spinner" /> : "Submit for review"}
               </button>
             )}
           </div>
@@ -237,7 +275,7 @@ function Wizard() {
   );
 }
 
-function UploadTile({ doc, file, onPick }: { doc: Doc; file?: { name: string; url: string | null }; onPick: (f: { name: string; url: string | null }) => void }) {
+function UploadTile({ doc, file, onPick }: { doc: Doc; file?: Picked; onPick: (f: File) => void }) {
   const input = useRef<HTMLInputElement>(null);
   return (
     <label className={`upload ${file ? "has" : ""}`}>
@@ -248,8 +286,8 @@ function UploadTile({ doc, file, onPick }: { doc: Doc; file?: { name: string; ur
         capture={doc.selfie ? "user" : undefined}
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (!f) return;
-          onPick({ name: f.name, url: f.type.startsWith("image/") ? URL.createObjectURL(f) : null });
+          if (f) onPick(f);
+          e.target.value = "";
         }}
       />
       <div className="upload-art">
@@ -306,10 +344,9 @@ function Guide({ art }: { art: Doc["art"] }) {
 }
 
 function Status() {
-  const s = useStore();
-  const toast = useToast();
-  const info = s.verificationInfo;
-  const approved = s.verification === "approved";
+  const me = useAccount();
+  const info = me.verification;
+  const approved = me.merchant.verification_status === "approved";
   return (
     <>
       <PageHeader title="Verification" />
@@ -321,7 +358,7 @@ function Status() {
           <div>
             <h2 style={{ fontSize: 22 }}>{approved ? "Verified" : "In review"}</h2>
             <p className="muted" style={{ marginTop: 6, fontSize: 14 }}>
-              {approved ? "Live payouts are enabled." : `We'll email ${s.account?.email} when it's done.`}
+              {approved ? "Live payouts are enabled." : `We'll email ${me.user.email} when it's done.`}
             </p>
           </div>
           <ol className="vf-track">
@@ -335,18 +372,10 @@ function Status() {
             <dl className="kv">
               <div><dt>Account type</dt><dd style={{ textTransform: "capitalize" }}>{info.kind}</dd></div>
               <div><dt>Name</dt><dd>{info.name}</dd></div>
-              <div><dt>Documents</dt><dd>{Object.keys(info.files).length} files</dd></div>
-              <div><dt>Submitted</dt><dd>{dateTime(info.submittedAt)}</dd></div>
-              {info.reviewedAt && <div><dt>Approved</dt><dd>{dateTime(info.reviewedAt)}</dd></div>}
+              <div><dt>Documents</dt><dd>{info.documents.length} files</dd></div>
+              <div><dt>Submitted</dt><dd>{dateTime(info.submitted_at)}</dd></div>
+              {info.reviewed_at && <div><dt>{approved ? "Approved" : "Reviewed"}</dt><dd>{dateTime(info.reviewed_at)}</dd></div>}
             </dl>
-          </div>
-        )}
-        {!approved && (
-          <div className="modal-foot" style={{ justifyContent: "space-between" }}>
-            <span className="hint">Preview build: approval comes from the SwiftPal admin console.</span>
-            <button className="btn btn-line btn-sm" onClick={() => { approveVerification(); toast("Verification approved"); }}>
-              Simulate approval
-            </button>
           </div>
         )}
       </section>

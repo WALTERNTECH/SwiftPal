@@ -3,43 +3,56 @@
 import { useEffect, useState } from "react";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
+import { api, invalidate, useAccount, useMode, usePaymentWatch, type ApiError, type Payment, type Payout } from "@/lib/api";
 import { dateTime, fee, maskPhone, money, money2, normalisePhone } from "@/lib/format";
 import { b2cFee, stkFee } from "@/lib/pricing";
 import { SANDBOX_NUMBERS } from "@/lib/site";
-import { simulatePayout, simulateStk, topUp, useStore, withdrawFloat, type Payment } from "@/lib/store";
 import { Drawer, KV, Modal, PayBadge, useToast } from "./ui";
+
+const REASONS = ["withdrawal", "salary", "refund", "commission", "promotion", "other"];
 
 // ---------- new STK payment ----------
 export function NewPaymentModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated?: (id: string) => void }) {
-  const s = useStore();
+  const me = useAccount();
+  const mode = useMode();
   const toast = useToast();
-  const test = s.mode === "test";
+  const test = mode === "test";
   const [phone, setPhone] = useState(test ? "254700000000" : "");
   const [amount, setAmount] = useState("100");
   const [reference, setReference] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (open) {
-      setPhone(test ? "254700000000" : s.account?.phone ?? "");
+      setPhone(test ? "254700000000" : me.user.phone);
       setReference(`TEST-${Math.floor(Math.random() * 9000 + 1000)}`);
       setError("");
+      setBusy(false);
     }
-  }, [open, test, s.account?.phone]);
+  }, [open, test, me.user.phone]);
 
   const amt = Math.floor(Number(amount) || 0);
   const f = stkFee(amt);
 
-  function submit() {
+  async function submit() {
     const p = normalisePhone(phone);
     if (!p) return setError("Enter a Safaricom number.");
     if (amt < 1 || amt > 250_000) return setError("Amount must be between KES 1 and KES 250,000.");
     if (!reference.trim() || reference.length > 12) return setError("Reference must be 1–12 characters.");
-    const r = simulateStk({ phone: p, amount: amt, reference: reference.trim() });
-    if (!r.ok) return setError(`${r.code}: ${r.message}`);
-    toast(`Prompt sent to ${maskPhone(p)}`);
-    onCreated?.(r.payment.id);
-    onClose();
+    setBusy(true);
+    setError("");
+    try {
+      const pay = await api<Payment>("/app/payments", { body: { mode, phone: p, amount: amt, reference: reference.trim() } });
+      invalidate("/app/payments", "/app/me");
+      toast(`Prompt sent to ${maskPhone(p)}`);
+      onCreated?.(pay.id);
+      onClose();
+    } catch (err) {
+      const e = err as ApiError;
+      setError(`${e.code}: ${e.message}`);
+    }
+    setBusy(false);
   }
 
   return (
@@ -50,7 +63,9 @@ export function NewPaymentModal({ open, onClose, onCreated }: { open: boolean; o
       footer={
         <>
           <button className="btn btn-line" onClick={onClose}>Cancel</button>
-          <button className="btn btn-ink" onClick={submit}>Send prompt</button>
+          <button className="btn btn-ink" onClick={submit} disabled={busy}>
+            {busy ? <span className="spinner" /> : "Send prompt"}
+          </button>
         </>
       }
     >
@@ -92,31 +107,21 @@ export function NewPaymentModal({ open, onClose, onCreated }: { open: boolean; o
 }
 
 // ---------- payment detail ----------
-export function PaymentDrawer({ payment, onClose }: { payment: Payment | null; onClose: () => void }) {
-  if (!payment) return null;
-  const p = payment;
-  const t0 = new Date(p.createdAt).getTime();
-  const at = (s: number) => new Date(t0 + s * 1000).toLocaleTimeString("en-KE", { hour12: false });
+const time = (iso: string) => new Date(iso).toLocaleTimeString("en-KE", { hour12: false });
+
+export function PaymentDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const p = usePaymentWatch(id);
+  if (!id) return null;
+  if (!p) {
+    return (
+      <Drawer open onClose={onClose} title={<span className="mono">{id}</span>}>
+        <span className="spinner" />
+      </Drawer>
+    );
+  }
   const done = p.status !== "pending";
-  const json = JSON.stringify(
-    {
-      id: p.id,
-      object: "payment",
-      status: p.status,
-      amount: p.amount,
-      currency: "KES",
-      phone: p.phone,
-      reference: p.reference,
-      channel: p.channel,
-      mpesa_receipt: p.receipt,
-      failure_code: p.failureCode,
-      fee: { amount: p.fee, charged: p.feeCharged },
-      livemode: p.mode === "live",
-      created_at: p.createdAt,
-    },
-    null,
-    2,
-  );
+  const failure = p.failure_code ? `${p.failure_message ?? "Not completed"} (${p.failure_code})` : p.failure_message ?? "Not completed";
+  const json = JSON.stringify({ ...p, object: "payment", currency: "KES" }, null, 2);
   return (
     <Drawer
       open
@@ -133,23 +138,21 @@ export function PaymentDrawer({ payment, onClose }: { payment: Payment | null; o
           ["Payment ID", <span key="id" className="mono">{p.id}</span>],
           ["Customer", <span key="ph" className="mono">{p.phone}</span>],
           ["Reference", <span key="r" className="mono">{p.reference}</span>],
-          ["M-Pesa receipt", p.receipt ? <span key="rc" className="mono">{p.receipt}</span> : <span key="rc" className="dim">—</span>],
-          ["Channel", <span key="c" className="mono">{p.channel}</span>],
-          ["Fee", p.feeCharged ? money2(p.fee) : <span key="f" className="muted">{p.fee === 0 ? "Free" : `${money2(p.fee)} not charged`}</span>],
-          ["Created", dateTime(p.createdAt)],
+          ["M-Pesa receipt", p.mpesa_receipt ? <span key="rc" className="mono">{p.mpesa_receipt}</span> : <span key="rc" className="dim">—</span>],
+          ["Channel", p.channel ? <span key="c" className="mono">{p.channel}</span> : <span key="c" className="dim">Sandbox</span>],
+          ["Fee", p.fee.charged ? money2(p.fee.amount) : <span key="f" className="muted">{p.fee.amount === 0 ? "Free" : `${money2(p.fee.amount)} not charged`}</span>],
+          ["Created", dateTime(p.created_at)],
         ]}
       />
       <div>
         <div className="eyebrow" style={{ marginBottom: 12 }}>Timeline</div>
         <ol className="timeline">
-          <li><span className="pt ok" /><span>Request received · <span className="mono">POST /v1/stk-push</span></span><time>{at(0)}</time></li>
-          <li><span className="pt ok" /><span>Prompt delivered to {maskPhone(p.phone)}</span><time>{at(2)}</time></li>
-          {!done && <li><span className="pt" /><span>Waiting for customer…</span><time /></li>}
-          {p.status === "succeeded" && <li><span className="pt ok" /><span>Paid · receipt <span className="mono">{p.receipt}</span></span><time>{at(12)}</time></li>}
-          {p.status === "cancelled" && <li><span className="pt warn" /><span>Customer cancelled (1032) · fee released</span><time>{at(9)}</time></li>}
-          {p.status === "expired" && <li><span className="pt" /><span>No response in 60s (1037) · fee released</span><time>{at(62)}</time></li>}
-          {p.status === "failed" && <li><span className="pt bad" /><span>Declined: insufficient funds (1) · fee released</span><time>{at(11)}</time></li>}
-          {done && <li><span className="pt ok" /><span>Webhook <span className="mono">payment.{p.status}</span> delivered · 200</span><time>{at(p.status === "expired" ? 63 : 13)}</time></li>}
+          <li><span className="pt ok" /><span>Prompt sent to {maskPhone(p.phone)}</span><time>{time(p.created_at)}</time></li>
+          {!done && <li><span className="pt" /><span>Waiting for the customer…</span><time /></li>}
+          {p.status === "succeeded" && <li><span className="pt ok" /><span>Paid · receipt <span className="mono">{p.mpesa_receipt}</span></span><time>{p.completed_at && time(p.completed_at)}</time></li>}
+          {p.status === "cancelled" && <li><span className="pt warn" /><span>{failure} · fee released</span><time>{p.completed_at && time(p.completed_at)}</time></li>}
+          {p.status === "expired" && <li><span className="pt" /><span>{failure} · fee released</span><time>{p.completed_at && time(p.completed_at)}</time></li>}
+          {p.status === "failed" && <li><span className="pt bad" /><span>{failure} · fee released</span><time>{p.completed_at && time(p.completed_at)}</time></li>}
         </ol>
       </div>
       <CodeBlock tabs={[{ label: "GET /v1/stk-push/" + p.id.slice(0, 10) + "…", lang: "json", code: json }]} />
@@ -159,60 +162,83 @@ export function PaymentDrawer({ payment, onClose }: { payment: Payment | null; o
 
 // ---------- top up ----------
 export function TopUpModal({ open, onClose, initial = "fee" }: { open: boolean; onClose: () => void; initial?: "fee" | "float" }) {
-  const s = useStore();
+  const me = useAccount();
+  const mode = useMode();
   const toast = useToast();
-  const [balance, setBalance] = useState<"fee" | "float">(initial);
+  const [account, setAccount] = useState<"fee" | "float">(initial);
   const [amount, setAmount] = useState("");
   const [phone, setPhone] = useState("");
-  const [stage, setStage] = useState<"form" | "waiting">("form");
+  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const payment = usePaymentWatch(paymentId);
 
   useEffect(() => {
     if (open) {
-      setBalance(initial);
+      setAccount(initial);
       setAmount(initial === "fee" ? "500" : "10000");
-      setPhone(s.account?.phone ?? "");
-      setStage("form");
+      setPhone(me.user.phone);
+      setPaymentId(null);
+      setBusy(false);
       setError("");
     }
-  }, [open, initial, s.account?.phone]);
+  }, [open, initial, me.user.phone]);
+
+  useEffect(() => {
+    if (!payment || payment.status === "pending") return;
+    // Stop watching first: the refresh below refetches this payment and would re-run the effect.
+    setPaymentId(null);
+    if (payment.status === "succeeded") {
+      invalidate("/app/wallet", "/app/ledger", "/app/me");
+      toast(`${money(payment.amount)} added to ${account === "fee" ? "fee credit" : "payout float"}`);
+      onClose();
+    } else {
+      setError(payment.failure_message ? `The top-up didn't go through: ${payment.failure_message}.` : "The top-up didn't go through.");
+    }
+  }, [payment, account, toast, onClose]);
 
   const amt = Math.floor(Number(amount) || 0);
 
-  function submit() {
+  async function submit() {
     if (amt < 10) return setError("Top up at least KES 10.");
-    if (!normalisePhone(phone)) return setError("Enter the M-Pesa number to charge.");
+    const p = normalisePhone(phone);
+    if (!p) return setError("Enter the M-Pesa number to charge.");
     setError("");
-    setStage("waiting");
-    setTimeout(() => {
-      topUp(s.mode, balance, amt);
-      toast(`${money(amt)} added to ${balance === "fee" ? "fee credit" : "payout float"}`);
-      onClose();
-    }, 2600);
+    setBusy(true);
+    try {
+      const pay = await api<Payment>("/app/wallet/topups", { body: { mode, account, amount: amt, phone: p } });
+      setPaymentId(pay.id);
+    } catch (err) {
+      setError((err as ApiError).message);
+    }
+    setBusy(false);
   }
 
+  const waiting = !!paymentId;
   return (
     <Modal
       open={open}
       onClose={onClose}
       title="Top up"
       footer={
-        stage === "form" ? (
+        !waiting ? (
           <>
             <button className="btn btn-line" onClick={onClose}>Cancel</button>
-            <button className="btn btn-ink" onClick={submit}>Send M-Pesa prompt</button>
+            <button className="btn btn-ink" onClick={submit} disabled={busy}>
+              {busy ? <span className="spinner" /> : "Send M-Pesa prompt"}
+            </button>
           </>
         ) : undefined
       }
     >
-      {stage === "form" ? (
+      {!waiting ? (
         <>
           <div className="segmented" role="group" aria-label="Balance">
-            <button aria-pressed={balance === "fee"} onClick={() => setBalance("fee")}>Fee credit</button>
-            <button aria-pressed={balance === "float"} onClick={() => setBalance("float")}>Payout float</button>
+            <button aria-pressed={account === "fee"} onClick={() => setAccount("fee")}>Fee credit</button>
+            <button aria-pressed={account === "float"} onClick={() => setAccount("float")}>Payout float</button>
           </div>
           <p className="hint" style={{ marginTop: -6 }}>
-            {balance === "fee" ? "Pays SwiftPal fees on STK Push and B2C. Not withdrawable." : "Funds B2C payouts. Withdrawable any time."}
+            {account === "fee" ? "Pays SwiftPal fees on STK Push and B2C. Not withdrawable." : "Funds B2C payouts. Withdrawable any time."}
           </p>
           <div className="field">
             <label className="label" htmlFor="tu-amt">Amount</label>
@@ -221,11 +247,11 @@ export function TopUpModal({ open, onClose, initial = "fee" }: { open: boolean; 
               <input id="tu-amt" className="input mono" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} />
             </div>
             <div className="amount-chips">
-              {(balance === "fee" ? [250, 500, 1000, 5000] : [5000, 10000, 50000, 100000]).map((a) => (
+              {(account === "fee" ? [250, 500, 1000, 5000] : [5000, 10000, 50000, 100000]).map((a) => (
                 <button key={a} type="button" onClick={() => setAmount(String(a))}>{a.toLocaleString()}</button>
               ))}
             </div>
-            {balance === "fee" && amt >= 10 && <span className="hint">Covers about {Math.floor(amt / 2.5).toLocaleString()} successful STK Push payments.</span>}
+            {account === "fee" && amt >= 10 && <span className="hint">Covers about {Math.floor(amt / 2.5).toLocaleString()} successful STK Push payments.</span>}
           </div>
           <div className="field">
             <label className="label" htmlFor="tu-ph">Pay from M-Pesa number</label>
@@ -248,19 +274,24 @@ export function TopUpModal({ open, onClose, initial = "fee" }: { open: boolean; 
 
 // ---------- withdraw ----------
 export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const s = useStore();
+  const me = useAccount();
+  const mode = useMode();
   const toast = useToast();
-  const bal = s.balances[s.mode];
+  const bal = me.balances[mode];
+  const float = bal.payout_float.available;
   const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     if (open) {
       setAmount("");
       setError("");
+      setBusy(false);
     }
   }, [open]);
   const amt = Math.floor(Number(amount) || 0);
   const f = b2cFee(amt);
+  const max = Math.floor(Math.min(float, 250_000));
   return (
     <Modal
       open={open}
@@ -271,16 +302,24 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           <button className="btn btn-line" onClick={onClose}>Cancel</button>
           <button
             className="btn btn-ink"
-            onClick={() => {
+            disabled={busy}
+            onClick={async () => {
               if (f === null) return setError("Withdraw between KES 10 and KES 250,000.");
-              if (amt > bal.float) return setError(`You have ${money(bal.float)} available.`);
-              if (f > bal.fee) return setError(`This needs ${money(f)} fee credit.`);
-              withdrawFloat(s.mode, amt);
-              toast(`${money(amt)} on its way to ${maskPhone(s.account?.phone ?? "")}`);
-              onClose();
+              if (amt > float) return setError(`You have ${money(float)} available.`);
+              setBusy(true);
+              setError("");
+              try {
+                await api<Payout>("/app/wallet/withdraw", { body: { mode, amount: amt } });
+                invalidate("/app/me", "/app/wallet", "/app/ledger", "/app/payouts");
+                toast(`${money(amt)} on its way to ${maskPhone(me.user.phone)}`);
+                onClose();
+              } catch (err) {
+                setError((err as ApiError).message);
+              }
+              setBusy(false);
             }}
           >
-            Withdraw
+            {busy ? <span className="spinner" /> : "Withdraw"}
           </button>
         </>
       }
@@ -288,8 +327,8 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       <div className="field">
         <div className="label-row">
           <label className="label" htmlFor="wd-amt">Amount</label>
-          <button className="link" style={{ border: 0, background: "none", fontSize: 13, cursor: "pointer" }} onClick={() => setAmount(String(Math.min(bal.float, 250_000)))}>
-            Max {money(Math.min(bal.float, 250_000))}
+          <button className="link" style={{ border: 0, background: "none", fontSize: 13, cursor: "pointer" }} onClick={() => setAmount(String(max))}>
+            Max {money(max)}
           </button>
         </div>
         <div className="input-group">
@@ -299,7 +338,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       </div>
       <KV
         rows={[
-          ["Sent to", <span key="p" className="mono">{s.account?.phone}</span>],
+          ["Sent to", <span key="p" className="mono">{me.user.phone}</span>],
           ["Fee", f === null ? "—" : <span key="f" className="num">{money(f)} from fee credit</span>],
         ]}
       />
@@ -311,21 +350,23 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
 
 // ---------- single payout ----------
 export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const s = useStore();
+  const mode = useMode();
   const toast = useToast();
   const [phone, setPhone] = useState("");
   const [amount, setAmount] = useState("");
   const [reference, setReference] = useState("");
   const [reason, setReason] = useState("withdrawal");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     if (open) {
-      setPhone(s.mode === "test" ? "254712345678" : "");
+      setPhone(mode === "test" ? "254712345678" : "");
       setAmount("1500");
       setReference(`WD-${Math.floor(Math.random() * 90000 + 10000)}`);
       setError("");
+      setBusy(false);
     }
-  }, [open, s.mode]);
+  }, [open, mode]);
   const amt = Math.floor(Number(amount) || 0);
   const f = b2cFee(amt);
   return (
@@ -338,16 +379,26 @@ export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => v
           <button className="btn btn-line" onClick={onClose}>Cancel</button>
           <button
             className="btn btn-ink"
-            onClick={() => {
+            disabled={busy}
+            onClick={async () => {
               const p = normalisePhone(phone);
               if (!p) return setError("Enter a Safaricom number.");
-              const r = simulatePayout({ phone: p, amount: amt, reference: reference.trim() || "PAYOUT", reason });
-              if (!r.ok) return setError(`${r.code}: ${r.message}`);
-              toast(`${money(amt)} payout to ${maskPhone(p)} is processing`);
-              onClose();
+              if (f === null) return setError("Payouts run from KES 10 to KES 250,000.");
+              setBusy(true);
+              setError("");
+              try {
+                await api<Payout>("/app/payouts", { body: { mode, phone: p, amount: amt, reference: reference.trim() || "PAYOUT", reason } });
+                invalidate("/app/payouts", "/app/me", "/app/wallet", "/app/ledger");
+                toast(`${money(amt)} payout to ${maskPhone(p)} is processing`);
+                onClose();
+              } catch (err) {
+                const e = err as ApiError;
+                setError(`${e.code}: ${e.message}`);
+              }
+              setBusy(false);
             }}
           >
-            Send {amt ? money(amt) : "payout"}
+            {busy ? <span className="spinner" /> : <>Send {amt ? money(amt) : "payout"}</>}
           </button>
         </>
       }
@@ -367,7 +418,7 @@ export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => v
         <div className="field">
           <label className="label" htmlFor="po-reason">Reason</label>
           <select id="po-reason" className="select input" value={reason} onChange={(e) => setReason(e.target.value)}>
-            {["withdrawal", "salary", "refund", "commission", "promotion", "other"].map((r) => (
+            {REASONS.map((r) => (
               <option key={r}>{r}</option>
             ))}
           </select>
@@ -375,7 +426,7 @@ export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => v
       </div>
       <div className="field">
         <label className="label" htmlFor="po-ref">Reference</label>
-        <input id="po-ref" className="input mono" value={reference} onChange={(e) => setReference(e.target.value)} />
+        <input id="po-ref" className="input mono" maxLength={32} value={reference} onChange={(e) => setReference(e.target.value)} />
       </div>
       <div className="callout">
         <Icon name="info" size={16} />

@@ -1,33 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { PageHeader } from "@/components/dash/ui";
 import { FeeCalculator } from "@/components/site/FeeCalculator";
 import { fee, money2, num } from "@/lib/format";
 import { b2cFee, B2C_BANDS, STK_BANDS } from "@/lib/pricing";
-import { useStore } from "@/lib/store";
+import { useApi, useMode, type Analytics } from "@/lib/api";
 
 export default function DashPricing() {
-  const s = useStore();
+  const mode = useMode();
   const { open } = useActions();
   const [probe, setProbe] = useState("3500");
   const probeAmt = Number(probe) || 0;
   const activeBand = B2C_BANDS.findIndex((b) => probeAmt >= b.min && (b.max === null || probeAmt <= b.max));
 
-  const month = useMemo(() => {
-    const start = new Date();
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
-    const t0 = start.getTime();
-    const ps = s.payments.filter((p) => p.mode === s.mode && p.status === "succeeded" && new Date(p.createdAt).getTime() >= t0);
-    const po = s.payouts.filter((p) => p.mode === s.mode && p.status === "succeeded" && new Date(p.createdAt).getTime() >= t0);
-    const stk = ps.reduce((a, p) => a + (p.feeCharged ? p.fee : 0), 0);
-    const b2c = po.reduce((a, p) => a + p.fee, 0);
-    const vol = ps.reduce((a, p) => a + p.amount, 0) + po.reduce((a, p) => a + p.amount, 0);
-    return { stk, b2c, total: stk + b2c, vol, count: ps.length + po.length };
-  }, [s.payments, s.payouts, s.mode]);
+  const { data: a30 } = useApi<Analytics>(`/app/analytics?mode=${mode}&days=30`);
+  const cur = a30?.current;
+  const month = { total: cur?.fees ?? 0, count: (cur?.successful ?? 0) + (cur?.payouts ?? 0), vol: (cur?.collected ?? 0) + (cur?.paid_out ?? 0) };
 
   return (
     <>
@@ -60,7 +51,7 @@ export default function DashPricing() {
         </section>
         <section className="stat rise" style={{ padding: 20, ["--d" as string]: "120ms" }}>
           <div className="stat-label">
-            <span className="stat-ic"><Icon name="receipt" size={13} /></span> Fees this month
+            <span className="stat-ic"><Icon name="receipt" size={13} /></span> Fees · 30 days
           </div>
           <div className="stat-val" style={{ fontSize: 34 }}>{money2(month.total)}</div>
           <span className="muted" style={{ fontSize: 12.5 }}>
