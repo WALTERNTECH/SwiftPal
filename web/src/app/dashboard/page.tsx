@@ -2,217 +2,271 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Icon } from "@/components/Icon";
-import { NewPaymentModal, PaymentDrawer, TopUpModal } from "@/components/dash/modals";
-import { PageHeader, PayBadge } from "@/components/dash/ui";
-import { VolumeChart } from "@/components/dash/VolumeChart";
-import { maskPhone, money, money2, num, timeAgo } from "@/lib/format";
-import { setMode, useStore } from "@/lib/store";
+import { Icon, type IconName } from "@/components/Icon";
+import { useActions } from "@/components/dash/actions";
+import { AreaChart, CountUp, Delta, kes, Sparkline, SuccessRing } from "@/components/dash/charts";
+import { compare, daily, type Range } from "@/lib/analytics";
+import { maskPhone, money, timeAgo } from "@/lib/format";
+import { useStore } from "@/lib/store";
 
-const WEEK = 7 * 86_400_000;
-
-export default function Home() {
+export default function Overview() {
   const s = useStore();
-  const [topUp, setTopUp] = useState<"fee" | "float" | null>(null);
-  const [newPay, setNewPay] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
-
+  const { open, showPayment } = useActions();
+  const [range, setRange] = useState<Range>(14);
   const mode = s.mode;
   const payments = useMemo(() => s.payments.filter((p) => p.mode === mode), [s.payments, mode]);
   const payouts = useMemo(() => s.payouts.filter((p) => p.mode === mode), [s.payouts, mode]);
   const bal = s.balances[mode];
 
-  const stats = useMemo(() => {
-    const since = Date.now() - WEEK;
-    const week = payments.filter((p) => new Date(p.createdAt).getTime() >= since);
-    const paid = week.filter((p) => p.status === "succeeded");
-    const settled = week.filter((p) => p.status !== "pending");
-    const po = payouts.filter((p) => new Date(p.createdAt).getTime() >= since && p.status === "succeeded");
-    const fees = paid.reduce((a, p) => a + (p.feeCharged ? p.fee : 0), 0) + po.reduce((a, p) => a + p.fee, 0);
-    return {
-      collected: paid.reduce((a, p) => a + p.amount, 0),
-      paidCount: paid.length,
-      rate: settled.length ? Math.round((paid.length / settled.length) * 100) : null,
-      paidOut: po.reduce((a, p) => a + p.amount, 0),
-      payoutCount: po.length,
-      fees,
-    };
-  }, [payments, payouts]);
+  const days = useMemo(() => daily(payments, payouts, range), [payments, payouts, range]);
+  const week = useMemo(() => daily(payments, payouts, 7), [payments, payouts]);
+  const { cur, prev } = useMemo(() => compare(payments, payouts, 7), [payments, payouts]);
 
   const verified = s.channels.some((c) => c.status === "verified");
-  const checklist = [
-    { done: !!s.account?.emailVerified, t: "Verify your email", d: "Done when you signed up.", href: null },
-    { done: !!s.business, t: "Add business details", d: "Name, type and expected volume.", href: "/onboarding" },
-    { done: verified, t: "Verify a Till or Paybill", d: "A KES 1 prompt to your phone turns on live STK Push.", href: "/dashboard/channels" },
-    { done: s.balances.live.fee > 0, t: "Fund your fee credit", d: "Top up by M-Pesa. Starter credit counts.", href: "/dashboard/wallet" },
-    { done: s.webhooks.length > 0, t: "Add a webhook endpoint", d: "Get payment results pushed to your server.", href: "/dashboard/developers/webhooks" },
-    { done: s.verification === "approved", t: "Enable live payouts", d: "Submit ID and KRA PIN (or CR12) for B2C.", href: "/dashboard/settings?tab=verification" },
+  const setup = [
+    { done: !!s.business, t: "Business details", href: "/dashboard/settings" },
+    { done: verified, t: "Verify a Till or Paybill", href: "/dashboard/channels" },
+    { done: s.balances.live.fee > 0, t: "Fund fee credit", href: "/dashboard/wallet" },
+    { done: s.webhooks.length > 0, t: "Add a webhook", href: "/dashboard/developers/webhooks" },
+    { done: s.verification === "approved", t: "Account verification", href: "/dashboard/verification" },
   ];
-  const doneCount = checklist.filter((c) => c.done).length;
-  const lowFee = bal.fee < s.lowBalanceAt;
+  const doneCount = setup.filter((x) => x.done).length;
+
+  const feed = useMemo(() => {
+    type Row = { id: string; icon: IconName; tone: string; title: string; sub: string; amount: string; in: boolean; at: string; pay?: boolean };
+    const rows: Row[] = [
+      ...payments.slice(0, 12).map<Row>((p) => ({
+        id: p.id,
+        icon: "collect",
+        tone: p.status === "succeeded" ? "ok" : p.status === "pending" ? "blue" : p.status === "cancelled" ? "warn" : "bad",
+        title: p.status === "succeeded" ? `Payment from ${maskPhone(p.phone)}` : p.status === "pending" ? `Prompt sent to ${maskPhone(p.phone)}` : `Payment ${p.status}`,
+        sub: p.receipt ?? p.reference,
+        amount: (p.status === "succeeded" ? "+" : "") + money(p.amount),
+        in: p.status === "succeeded",
+        at: p.createdAt,
+        pay: true,
+      })),
+      ...payouts.slice(0, 6).map<Row>((p) => ({
+        id: p.id,
+        icon: "payout",
+        tone: p.status === "failed" ? "bad" : "blue",
+        title: p.status === "failed" ? "Payout refunded" : `Payout to ${p.recipient ?? maskPhone(p.phone)}`,
+        sub: p.receipt ?? p.reference,
+        amount: `−${money(p.amount)}`,
+        in: false,
+        at: p.createdAt,
+      })),
+    ];
+    return rows.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 8);
+  }, [payments, payouts]);
+
+  const greeting = (() => {
+    const h = new Date().getHours();
+    return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+  })();
+
+  const stats = [
+    { label: "Collected", icon: "collect" as IconName, val: cur.collected, fmt: kes, d: (prev.collected ? (cur.collected - prev.collected) / prev.collected : null), spark: week.map((d) => d.collected) },
+    { label: "Paid out", icon: "payout" as IconName, val: cur.paidOut, fmt: kes, d: (prev.paidOut ? (cur.paidOut - prev.paidOut) / prev.paidOut : null), spark: week.map((d) => d.paidOut), blue: true },
+    { label: "Successful payments", icon: "check" as IconName, val: cur.paid, fmt: (n: number) => String(Math.round(n)), d: (prev.paid ? (cur.paid - prev.paid) / prev.paid : null), spark: week.map((d) => d.paid) },
+    { label: "Fees", icon: "receipt" as IconName, val: cur.fees, fmt: (n: number) => `KES ${n.toFixed(2)}`, d: (prev.fees ? (cur.fees - prev.fees) / prev.fees : null), spark: week.map((d) => d.paid), invert: true },
+  ];
 
   return (
     <>
-      <PageHeader
-        title={`Good ${greeting()}, ${s.account?.firstName ?? ""}`}
-        sub={mode === "test" ? "Sandbox overview: simulated prompts, payouts and webhooks." : "Live overview for the last 7 days."}
-        actions={
-          <>
-            <Link href="/dashboard/payouts" className="btn btn-line">
-              <Icon name="payout" size={15} /> Send payout
-            </Link>
-            <button className="btn btn-ink" onClick={() => setNewPay(true)}>
-              <Icon name="collect" size={15} /> {mode === "test" ? "Test STK Push" : "Request payment"}
-            </button>
-          </>
-        }
-      />
-
-      {doneCount < checklist.length && (
-        <section className="panel">
-          <div className="panel-head">
-            <div className="grow">
-              <h3>Go live checklist</h3>
-              <p className="muted" style={{ fontSize: 13 }}>
-                {doneCount} of {checklist.length} done. {verified ? "Live STK Push is on." : "Live STK Push turns on once a channel is verified."}
-              </p>
-            </div>
-            <div style={{ width: 140 }} className="progress" aria-hidden>
-              <i style={{ width: `${(doneCount / checklist.length) * 100}%` }} />
-            </div>
-          </div>
-          <div className="checklist">
-            {checklist.map((c) => (
-              <div key={c.t} className={`check-item ${c.done ? "done" : ""}`}>
-                <span className="check-mark">{c.done && <Icon name="check" size={12} strokeWidth={2.4} />}</span>
-                <div>
-                  <b>{c.t}</b>
-                  <span className="d">{c.d}</span>
-                </div>
-                {!c.done && c.href && (
-                  <Link href={c.href} className="btn btn-line btn-sm">
-                    Start
-                  </Link>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="balances">
-        <div className="panel balance">
-          <div className="spread">
-            <span className="muted" style={{ fontSize: 13.5 }}>Fee credit</span>
-            {lowFee ? <span className="badge warn">Below KES {num(s.lowBalanceAt)}</span> : <span className="badge plain">Pays fees</span>}
-          </div>
-          <div className="balance-amt"><small>KES</small>{bal.fee.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-          <div className="spread wrap">
-            <div className="balance-meta">
-              <span>≈ <b>{num(Math.floor(bal.fee / 2.5))}</b> paid prompts</span>
-              <span>Auto-cover <b>{s.autoCover ? "on" : "off"}</b></span>
-            </div>
-            <button className="btn btn-line btn-sm" onClick={() => setTopUp("fee")}><Icon name="plus" size={14} /> Top up</button>
-          </div>
+      <div className="page-header rise">
+        <div>
+          <h1>
+            {greeting}, {s.account?.firstName}
+          </h1>
+          <p className="muted">{mode === "test" ? "Sandbox" : "Live"} · last 7 days compared with the 7 before</p>
         </div>
-        <div className="panel balance">
-          <div className="spread">
-            <span className="muted" style={{ fontSize: 13.5 }}>Payout float</span>
-            <span className="badge pine">Withdrawable</span>
-          </div>
-          <div className="balance-amt"><small>KES</small>{bal.float.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-          <div className="spread wrap">
-            <div className="balance-meta">
-              <span>Paid out 7d <b>{money(stats.paidOut)}</b></span>
-            </div>
-            <button className="btn btn-line btn-sm" onClick={() => setTopUp("float")}><Icon name="plus" size={14} /> Top up</button>
-          </div>
+        <div className="row wrap">
+          <button className="btn btn-line" onClick={() => open("payout")}>
+            <Icon name="payout" size={15} /> Send payout
+          </button>
+          <button className="btn btn-pine" onClick={() => open("payment")}>
+            <Icon name="collect" size={15} /> {mode === "test" ? "Test STK Push" : "Request payment"}
+          </button>
         </div>
-      </section>
-
-      <dl className="kpis">
-        <div className="kpi">
-          <dt>Collected · 7 days</dt>
-          <dd>{money(stats.collected)}</dd>
-          <span className="sub">{num(stats.paidCount)} payments</span>
-        </div>
-        <div className="kpi">
-          <dt>Prompt success rate</dt>
-          <dd>{stats.rate === null ? "—" : `${stats.rate}%`}</dd>
-          <span className="sub">of settled prompts</span>
-        </div>
-        <div className="kpi">
-          <dt>Paid out · 7 days</dt>
-          <dd>{money(stats.paidOut)}</dd>
-          <span className="sub">{num(stats.payoutCount)} payouts</span>
-        </div>
-        <div className="kpi">
-          <dt>Fees · 7 days</dt>
-          <dd>{money2(stats.fees)}</dd>
-          <span className="sub">only on completed transactions</span>
-        </div>
-      </dl>
+      </div>
 
       <div className="grid-2">
-        <section className="panel">
-          <div className="panel-head">
-            <h3>Collected per day</h3>
-            <span className="muted" style={{ fontSize: 12.5 }}>Last 14 days · successful only</span>
+        <section className="bal-hero rise" style={{ ["--d" as string]: "40ms" }}>
+          <div className="bal-orb" />
+          <div className="bal-top">
+            <span className="eyebrow">Balances · {mode}</span>
+            <span className="bal-chip">
+              <i /> {verified ? "Live STK Push on" : "Sandbox ready"}
+            </span>
           </div>
-          {payments.length ? (
-            <VolumeChart payments={payments} />
-          ) : (
-            <div className="empty">
-              <b>No payments yet</b>
-              <p className="muted">
-                {mode === "live" ? (
-                  <>Live payments will show here. <button className="link" style={{ border: 0, background: "none", cursor: "pointer" }} onClick={() => setMode("test")}>Switch to test mode</button> to see the sandbox.</>
-                ) : (
-                  "Send a test STK Push to see it here."
-                )}
-              </p>
+          <div className="bal-grid">
+            <div className="bal-item">
+              <span>Fee credit</span>
+              <div className="bal-amt">
+                <small>KES</small>
+                <CountUp value={bal.fee} format={(n) => n.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
+              </div>
+              <div className="bal-meta">≈ {Math.floor(bal.fee / 2.5).toLocaleString()} paid prompts</div>
             </div>
-          )}
+            <div className="bal-item">
+              <span>Payout float</span>
+              <div className="bal-amt">
+                <small>KES</small>
+                <CountUp value={bal.float} format={(n) => n.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
+              </div>
+              <div className="bal-meta">withdrawable</div>
+            </div>
+          </div>
+          <div className="bal-actions">
+            <button className="bal-btn primary" onClick={() => open("topup-fee")}>
+              <Icon name="plus" size={14} /> Top up
+            </button>
+            <button className="bal-btn" onClick={() => open("topup-float")}>Fund float</button>
+            <button className="bal-btn" onClick={() => open("withdraw")}>Withdraw</button>
+          </div>
         </section>
 
-        <section className="panel">
-          <div className="panel-head">
-            <h3>Recent payments</h3>
-            <Link href="/dashboard/payments" className="link" style={{ fontSize: 13 }}>View all</Link>
+        <section className="panel setup rise" style={{ ["--d" as string]: "80ms" }}>
+          <div className="setup-top">
+            <div className="setup-ring">
+              <svg width="48" height="48" viewBox="0 0 48 48" aria-hidden>
+                <circle className="track" cx="24" cy="24" r="20" fill="none" strokeWidth="5" />
+                <circle className="val" cx="24" cy="24" r="20" fill="none" strokeWidth="5" strokeDasharray={2 * Math.PI * 20} strokeDashoffset={2 * Math.PI * 20 * (1 - doneCount / setup.length)} />
+              </svg>
+              <span>{doneCount}/{setup.length}</span>
+            </div>
+            <div>
+              <b>Account setup</b>
+              <div className="muted" style={{ fontSize: 12.5 }}>{doneCount === setup.length ? "Complete" : `${setup.length - doneCount} left`}</div>
+            </div>
           </div>
-          {payments.length ? (
-            <div className="table-wrap">
-              <table className="table">
-                <tbody>
-                  {payments.slice(0, 7).map((p) => (
-                    <tr key={p.id} className="clickable" onClick={() => setOpenId(p.id)}>
-                      <td>
-                        <div className="num">{money(p.amount)}</div>
-                        <div className="dim mono" style={{ fontSize: 12 }}>{maskPhone(p.phone)}</div>
-                      </td>
-                      <td><PayBadge s={p.status} /></td>
-                      <td className="right muted" style={{ fontSize: 12.5 }}>{timeAgo(p.createdAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="empty">
-              <p className="muted">Nothing yet.</p>
-            </div>
-          )}
+          <div className="setup-list">
+            {setup.map((x) =>
+              x.done ? (
+                <div key={x.t} className="setup-item done">
+                  <span className="setup-mark"><Icon name="check" size={11} strokeWidth={2.6} /></span>
+                  <span className="grow">{x.t}</span>
+                </div>
+              ) : (
+                <Link key={x.t} href={x.href} className="setup-item">
+                  <span className="setup-mark" />
+                  <span className="grow">{x.t}</span>
+                  <Icon name="chevronRight" size={14} className="dim" />
+                </Link>
+              ),
+            )}
+          </div>
         </section>
       </div>
 
-      <TopUpModal open={topUp !== null} initial={topUp ?? "fee"} onClose={() => setTopUp(null)} />
-      <NewPaymentModal open={newPay} onClose={() => setNewPay(false)} onCreated={setOpenId} />
-      <PaymentDrawer payment={s.payments.find((p) => p.id === openId) ?? null} onClose={() => setOpenId(null)} />
+      <div className="stats">
+        {stats.map((st, i) => (
+          <div key={st.label} className="stat rise" style={{ ["--d" as string]: `${120 + i * 50}ms` }}>
+            <div className="stat-label">
+              <span className={`stat-ic ${st.blue ? "blue" : ""}`}>
+                <Icon name={st.icon} size={13} />
+              </span>
+              {st.label}
+            </div>
+            <div className="stat-val">
+              <CountUp value={st.val} format={st.fmt} />
+            </div>
+            <div className="stat-foot">
+              <span className="row" style={{ gap: 6 }}>
+                <Delta value={st.d} invert={st.invert} />
+              </span>
+              <Sparkline values={st.spark} blue={st.blue} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid-2">
+        <section className="panel rise" style={{ ["--d" as string]: "200ms" }}>
+          <div className="panel-head">
+            <div>
+              <h3>Volume</h3>
+              <div className="legend" style={{ marginTop: 4 }}>
+                <span><i className="swatch s1" /> Collected <b>{money(days.reduce((a, d) => a + d.collected, 0))}</b></span>
+                <span><i className="swatch s2" /> Paid out <b>{money(days.reduce((a, d) => a + d.paidOut, 0))}</b></span>
+              </div>
+            </div>
+            <div className="range" role="group" aria-label="Range">
+              {([7, 14, 30] as Range[]).map((r) => (
+                <button key={r} aria-pressed={range === r} onClick={() => setRange(r)}>
+                  {r}d
+                </button>
+              ))}
+            </div>
+          </div>
+          {payments.length ? (
+            <AreaChart
+              key={range}
+              labels={days.map((d) => d.label)}
+              series={[
+                { key: "c", label: "Collected", cls: "s1", values: days.map((d) => d.collected) },
+                { key: "p", label: "Paid out", cls: "s2", values: days.map((d) => d.paidOut) },
+              ]}
+            />
+          ) : (
+            <div className="empty">
+              <b>No activity yet</b>
+              <p className="muted">{mode === "live" ? "Live payments appear here." : "Send a test STK Push to see it here."}</p>
+            </div>
+          )}
+        </section>
+
+        <section className="panel rise" style={{ ["--d" as string]: "240ms" }}>
+          <div className="panel-head">
+            <h3>Prompt success</h3>
+            <Link href="/dashboard/analytics" className="link" style={{ fontSize: 12.5 }}>Analytics</Link>
+          </div>
+          <div className="panel-body" style={{ display: "grid", gap: 18, justifyItems: "center" }}>
+            <SuccessRing rate={cur.rate} />
+            <dl className="mini-stats" style={{ width: "100%", gridTemplateColumns: "1fr 1fr", boxShadow: "none" }}>
+              <div>
+                <dt>Prompts</dt>
+                <dd>{cur.prompts}</dd>
+              </div>
+              <div>
+                <dt>Avg ticket</dt>
+                <dd>{cur.avgTicket ? kes(cur.avgTicket) : "—"}</dd>
+              </div>
+            </dl>
+          </div>
+        </section>
+      </div>
+
+      <section className="panel rise" style={{ ["--d" as string]: "280ms" }}>
+        <div className="panel-head">
+          <h3>Recent activity</h3>
+          <Link href="/dashboard/payments" className="link" style={{ fontSize: 12.5 }}>All payments</Link>
+        </div>
+        {feed.length ? (
+          <div className="feed">
+            {feed.map((f, i) => (
+              <div key={f.id} className="feed-row" style={{ ["--d" as string]: `${300 + i * 40}ms` }} onClick={() => f.pay && showPayment(f.id)}>
+                <span className={`feed-ic ${f.tone}`}>
+                  <Icon name={f.icon} size={15} />
+                </span>
+                <div className="feed-t">
+                  <b>{f.title}</b>
+                  <span>{f.sub}</span>
+                </div>
+                <div className="feed-amt">
+                  <b className={f.in ? "in" : ""}>{f.amount}</b>
+                  <span>{timeAgo(f.at)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty">
+            <p className="muted">Nothing yet.</p>
+          </div>
+        )}
+      </section>
     </>
   );
-}
-
-function greeting() {
-  const h = new Date().getHours();
-  return h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
 }

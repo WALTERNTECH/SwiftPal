@@ -56,7 +56,7 @@ const ERRORS: [number, string, string][] = [
   [403, "key_scope_denied", "The key exists but is not allowed to call this endpoint. Edit its scopes in the dashboard."],
   [403, "ip_not_allowed", "The key has an IP allowlist and this request came from elsewhere."],
   [403, "account_not_live", "A live key was used before the account went live. Use your sp_test_ key until then."],
-  [403, "payouts_not_enabled", "B2C needs approved business details. Submit them under Settings → Verification."],
+  [403, "payouts_not_enabled", "B2C needs a verified account. Complete Verification in the dashboard."],
   [402, "insufficient_fee_credit", "Fee credit cannot cover the held fee. Top up, or turn on auto-cover from payout float."],
   [409, "insufficient_float", "Payout float is lower than the payout amount."],
   [409, "idempotency_conflict", "This Idempotency-Key was already used with a different request body."],
@@ -81,7 +81,7 @@ const FAQ: [string, string][] = [
   ["Do I need my own Daraja app or shortcode approval?", "No. SwiftPal holds the Daraja integration. You add the Paybill or Till you already use, and prompts pay into it."],
   ["Where do customer payments settle?", "In the Paybill or Till you registered, the same as a payment made from the M-Pesa menu."],
   ["What happens when fee credit runs out?", "Requests return 402 insufficient_fee_credit. Turn on auto-cover to take fees from payout float instead, and set a low-balance alert in the dashboard."],
-  ["What do I need to go live?", "For STK Push, a Till or Paybill verified with a KES 1 prompt. For B2C payouts, approved business details: ID and KRA PIN, or a registration certificate and CR12."],
+  ["What do I need to go live?", "For STK Push, a Till or Paybill verified with a KES 1 prompt. For B2C payouts, a verified account: national ID and a selfie holding it for individuals; certificate of incorporation, CR12 and a director's ID for businesses."],
   ["Can I withdraw payout float?", "Yes, to the M-Pesa number on your account, at the normal B2C fee for the amount."],
   ["Is there a sandbox?", "Yes. sp_test_ keys simulate prompts, payouts and webhooks with the same responses as live. See Sandbox for numbers that force each outcome."],
 ];
@@ -285,7 +285,7 @@ export const DOCS: DocPage[] = [
           rows={[
             ["phone", "string", "Customer's Safaricom number. 07…, 01…, +254… or 254… are all accepted."],
             ["amount", "integer", "KES 1 to 250,000. Amounts under KES 10 are free."],
-            ["reference", "string", "Up to 12 characters. Shown on the customer's statement and, for Paybills, used as the account number."],
+            ["reference", "string", "Up to 12 characters. Your order ID, returned on every webhook. Paybill channels pay into the account number set on the channel."],
             ["description", "string?", "Up to 13 characters, shown on the prompt. Defaults to your business name."],
             ["channel", "string?", "Channel ID (till_… or paybill_…). Leave it out to use your default channel."],
             ["metadata", "object?", "Up to 20 keys of your own. Returned on every webhook."],
@@ -326,7 +326,7 @@ export const DOCS: DocPage[] = [
       <>
         <div className="callout warn">
           <Icon name="shield" size={16} />
-          <span>Live payouts need approved business details. Test mode works straight away.</span>
+          <span>Live payouts need a verified account. Test mode works straight away.</span>
         </div>
         <Endpoint method="POST" path="/v1/payouts" />
         <Params

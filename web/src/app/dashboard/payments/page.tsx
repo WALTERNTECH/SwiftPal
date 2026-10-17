@@ -2,38 +2,42 @@
 
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
-import { NewPaymentModal, PaymentDrawer } from "@/components/dash/modals";
+import { useActions } from "@/components/dash/actions";
+import { kes } from "@/components/dash/charts";
 import { downloadCsv, Empty, PageHeader, PayBadge } from "@/components/dash/ui";
+import { summarise, rangeStart } from "@/lib/analytics";
 import { dateTime, fee, maskPhone, money } from "@/lib/format";
 import { useStore, type PayStatus } from "@/lib/store";
 
-const FILTERS: { v: "all" | PayStatus | "unpaid"; t: string }[] = [
+type Filter = "all" | PayStatus | "unpaid";
+const FILTERS: { v: Filter; t: string }[] = [
   { v: "all", t: "All" },
   { v: "succeeded", t: "Succeeded" },
   { v: "pending", t: "Pending" },
   { v: "unpaid", t: "Not paid" },
 ];
-
 const PAGE = 15;
+
+const initials = (phone: string) => phone.slice(-2);
 
 export default function Payments() {
   const s = useStore();
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["v"]>("all");
+  const { open, showPayment } = useActions();
+  const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(0);
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [newPay, setNewPay] = useState(false);
+
+  const mine = useMemo(() => s.payments.filter((p) => p.mode === s.mode), [s.payments, s.mode]);
+  const sum = useMemo(() => summarise(mine, [], rangeStart(30), Date.now() + 86_400_000), [mine]);
+  const count = (f: Filter) =>
+    f === "all" ? mine.length : f === "unpaid" ? mine.filter((p) => ["failed", "cancelled", "expired"].includes(p.status)).length : mine.filter((p) => p.status === f).length;
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return s.payments
-      .filter((p) => p.mode === s.mode)
-      .filter((p) =>
-        filter === "all" ? true : filter === "unpaid" ? ["failed", "cancelled", "expired"].includes(p.status) : p.status === filter,
-      )
+    return mine
+      .filter((p) => (filter === "all" ? true : filter === "unpaid" ? ["failed", "cancelled", "expired"].includes(p.status) : p.status === filter))
       .filter((p) => !needle || [p.phone, p.reference, p.receipt ?? "", p.id].some((v) => v.toLowerCase().includes(needle)));
-  }, [s.payments, s.mode, filter, q]);
-
+  }, [mine, filter, q]);
   const shown = rows.slice(page * PAGE, page * PAGE + PAGE);
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
 
@@ -41,7 +45,7 @@ export default function Payments() {
     <>
       <PageHeader
         title="Payments"
-        sub="STK Push collections."
+        sub="STK Push collections"
         actions={
           <>
             <button
@@ -54,25 +58,32 @@ export default function Payments() {
                 ])
               }
             >
-              <Icon name="download" size={15} /> Export CSV
+              <Icon name="download" size={15} /> Export
             </button>
-            <button className="btn btn-ink" onClick={() => setNewPay(true)}>
+            <button className="btn btn-pine" onClick={() => open("payment")}>
               <Icon name="plus" size={15} /> {s.mode === "test" ? "Test payment" : "Request payment"}
             </button>
           </>
         }
       />
 
-      <section className="panel">
+      <dl className="mini-stats rise">
+        <div><dt>Collected · 30d</dt><dd>{kes(sum.collected)}</dd></div>
+        <div><dt>Successful</dt><dd>{sum.paid}</dd></div>
+        <div><dt>Success rate</dt><dd>{sum.rate === null ? "—" : `${(sum.rate * 100).toFixed(1)}%`}</dd></div>
+        <div><dt>Average ticket</dt><dd>{sum.avgTicket ? kes(sum.avgTicket) : "—"}</dd></div>
+      </dl>
+
+      <section className="panel rise" style={{ ["--d" as string]: "60ms" }}>
         <div className="filters">
-          <div className="segmented" role="group" aria-label="Status">
+          <div className="pill-filter" role="group" aria-label="Status">
             {FILTERS.map((f) => (
               <button key={f.v} aria-pressed={filter === f.v} onClick={() => { setFilter(f.v); setPage(0); }}>
-                {f.t}
+                {f.t} <em>{count(f.v)}</em>
               </button>
             ))}
           </div>
-          <div className="search">
+          <div className="search" style={{ marginLeft: "auto" }}>
             <Icon name="search" size={15} />
             <input className="input" placeholder="Phone, reference or receipt" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} aria-label="Search payments" />
           </div>
@@ -93,11 +104,16 @@ export default function Payments() {
                   </tr>
                 </thead>
                 <tbody>
-                  {shown.map((p) => (
-                    <tr key={p.id} className="clickable" onClick={() => setOpenId(p.id)}>
-                      <td className="right num">{money(p.amount)}</td>
+                  {shown.map((p, i) => (
+                    <tr key={p.id} className="clickable" onClick={() => showPayment(p.id)} style={{ animationDelay: `${i * 18}ms` }}>
+                      <td className="right num" style={{ fontWeight: 500 }}>{money(p.amount)}</td>
                       <td><PayBadge s={p.status} /></td>
-                      <td className="mono">{maskPhone(p.phone)}</td>
+                      <td>
+                        <span className="cust">
+                          <span className="cust-av">{initials(p.phone)}</span>
+                          <span className="mono">{maskPhone(p.phone)}</span>
+                        </span>
+                      </td>
                       <td className="mono">{p.reference}</td>
                       <td className="mono">{p.receipt ?? <span className="dim">—</span>}</td>
                       <td className="right num">{p.feeCharged ? fee(p.fee) : <span className="dim">0</span>}</td>
@@ -121,14 +137,11 @@ export default function Payments() {
           <Empty
             icon="collect"
             title={q || filter !== "all" ? "No payments match" : "No payments yet"}
-            body={q || filter !== "all" ? "Try a different filter or search." : s.mode === "live" ? "Live payments appear here once customers pay through your verified channel." : "Send a test STK Push to see how payments flow."}
-            action={!q && filter === "all" ? <button className="btn btn-ink" onClick={() => setNewPay(true)}>Send a test payment</button> : undefined}
+            body={q || filter !== "all" ? "Try another filter." : s.mode === "live" ? "Live payments appear here." : "Send a test STK Push."}
+            action={!q && filter === "all" ? <button className="btn btn-pine" onClick={() => open("payment")}>Send a test payment</button> : undefined}
           />
         )}
       </section>
-
-      <NewPaymentModal open={newPay} onClose={() => setNewPay(false)} onCreated={setOpenId} />
-      <PaymentDrawer payment={s.payments.find((p) => p.id === openId) ?? null} onClose={() => setOpenId(null)} />
     </>
   );
 }

@@ -91,7 +91,7 @@ export default function Onboarding() {
 // ---------------------------------------------------------------------------
 
 const TYPES: { v: BusinessType; t: string; d: string }[] = [
-  { v: "individual", t: "Individual or sole proprietor", d: "You trade under your own name or a registered business name." },
+  { v: "individual", t: "Individual", d: "Developer, freelancer or sole trader. Verified with your national ID." },
   { v: "company", t: "Registered company", d: "A limited company or partnership with a CR12." },
   { v: "ngo", t: "NGO, school or church", d: "A registered non-profit, institution or society." },
 ];
@@ -142,7 +142,7 @@ function BusinessStep({ onNext }: { onNext: () => void }) {
       </fieldset>
 
       <div className="field">
-        <label className="label" htmlFor="bname">{b.type === "individual" ? "Business or trading name" : "Registered name"}</label>
+        <label className="label" htmlFor="bname">{b.type === "individual" ? "Project or trading name" : "Registered name"}</label>
         <input id="bname" className="input" value={b.name} placeholder="Njeri Home Stores" onChange={(e) => setB({ ...b, name: e.target.value })} aria-invalid={touched && b.name.trim().length < 2 ? true : undefined} />
         {touched && b.name.trim().length < 2 && <span className="error-text">Enter your business name</span>}
       </div>
@@ -209,6 +209,10 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
       setError(kind === "till" ? "A till number is 5 to 7 digits." : "A paybill number is 5 to 7 digits.");
       return;
     }
+    if (kind === "paybill" && !account.trim()) {
+      setError("Enter the account number for this paybill.");
+      return;
+    }
     if (!displayName.trim()) {
       setError("Enter the name customers see on the prompt.");
       return;
@@ -217,7 +221,7 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
     const id = addChannel({
       kind,
       shortcode,
-      accountNumber: kind === "paybill" ? account.trim() || undefined : undefined,
+      accountNumber: kind === "paybill" ? account.trim() : undefined,
       label: kind === "till" ? `Till ${shortcode}` : `Paybill ${shortcode}`,
       displayName: displayName.trim().toUpperCase(),
     });
@@ -256,9 +260,8 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
 
           {kind === "paybill" && (
             <div className="field">
-              <label className="label" htmlFor="acc">Default account number <span className="dim">(optional)</span></label>
-              <input id="acc" className="input mono" placeholder="Leave blank to use each payment's reference" value={account} disabled={vs !== "form"} onChange={(e) => setAccount(e.target.value.slice(0, 12))} />
-              <span className="hint">When blank, the <code className="inline-code">reference</code> you send becomes the account number.</span>
+              <label className="label" htmlFor="acc">Account number</label>
+              <input id="acc" className="input mono" value={account} disabled={vs !== "form"} onChange={(e) => setAccount(e.target.value.slice(0, 20))} />
             </div>
           )}
 
@@ -340,7 +343,7 @@ function ChannelStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
             stage={stage}
             amount="Ksh1.00"
             merchant={(displayName || "YOUR BUSINESS").toUpperCase()}
-            account={kind === "paybill" ? account || "SWIFTPAL" : undefined}
+            account={kind === "paybill" ? account || "—" : undefined}
             pinDigits={0}
             receipt="TJG1V3RF7Y"
           />

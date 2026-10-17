@@ -1,24 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { PageHeader, useToast } from "@/components/dash/ui";
 import { normalisePhone } from "@/lib/format";
-import {
-  approveVerification,
-  resetPrototype,
-  saveBusiness,
-  submitVerification,
-  updateAccount,
-  useStore,
-  type Business,
-} from "@/lib/store";
+import { resetPrototype, saveBusiness, updateAccount, useStore, type Business } from "@/lib/store";
 
 const TABS = [
   { v: "profile", t: "Profile" },
   { v: "business", t: "Business" },
-  { v: "verification", t: "Verification" },
   { v: "team", t: "Team" },
   { v: "danger", t: "Preview data" },
 ] as const;
@@ -43,9 +35,9 @@ export default function Settings() {
           ))}
         </nav>
         <div className="stack" style={{ gap: 20 }}>
+          {tab === "profile" && <VerifyCard />}
           {tab === "profile" && <Profile />}
           {tab === "business" && <BusinessTab />}
-          {tab === "verification" && <VerificationTab />}
           {tab === "team" && <Team />}
           {tab === "danger" && <Danger />}
         </div>
@@ -114,99 +106,23 @@ function BusinessTab() {
   );
 }
 
-function VerificationTab() {
+function VerifyCard() {
   const s = useStore();
-  const toast = useToast();
-  const company = s.business?.type !== "individual";
-  const [f, setF] = useState({ idNumber: "", kraPin: "", regNumber: "", director: "" });
-  const [files, setFiles] = useState<Record<string, string>>({});
-  const [error, setError] = useState("");
-
-  if (s.verification === "approved") {
-    return (
-      <section className="panel panel-body">
-        <div className="row"><span className="badge ok">Approved</span><b>Live payouts are enabled</b></div>
-        <p className="muted" style={{ marginTop: 8, fontSize: 14 }}>Your live keys can now use the <code className="inline-code">payouts:write</code> scope.</p>
-      </section>
-    );
-  }
-
-  if (s.verification === "submitted") {
-    return (
-      <section className="panel panel-body stack">
-        <div className="row"><span className="badge info">In review</span><b>We&apos;re checking your details</b></div>
-        <p className="muted" style={{ fontSize: 14 }}>
-          Most reviews finish within a few business hours. We&apos;ll email {s.account?.email} as soon as live payouts are on. STK Push
-          and the sandbox keep working in the meantime.
-        </p>
-        <div className="callout">
-          <Icon name="info" size={16} />
-          <span className="grow">Preview build: approval normally comes from the SwiftPal admin console. You can simulate it here.</span>
-          <button className="btn btn-line btn-sm" onClick={() => { approveVerification(); toast("Verification approved"); }}>Simulate approval</button>
-        </div>
-      </section>
-    );
-  }
-
-  const fileField = (k: string, label: string, hint: string) => (
-    <div className="field full">
-      <span className="label">{label}</span>
-      <label className="dropzone" style={{ padding: 16, justifyItems: "start", textAlign: "left" }}>
-        <input type="file" hidden accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => e.target.files?.[0] && setFiles({ ...files, [k]: e.target.files[0].name })} />
-        <span className="row" style={{ gap: 8 }}>
-          <Icon name={files[k] ? "check" : "upload"} size={16} />
-          <b style={{ color: "var(--ink)", fontWeight: 500 }}>{files[k] ?? "Choose a file"}</b>
-        </span>
-        <span>{hint}</span>
-      </label>
-    </div>
-  );
-
+  const label = s.verification === "approved" ? "Verified" : s.verification === "submitted" ? "In review" : "Not verified";
+  const tone = s.verification === "approved" ? "ok" : s.verification === "submitted" ? "info" : "warn";
   return (
-    <section className="panel">
-      <div className="panel-head">
-        <div>
-          <h3>Business verification</h3>
-          <p className="muted" style={{ fontSize: 13 }}>Required for live B2C payouts only. STK Push and the sandbox don&apos;t need it.</p>
-        </div>
-      </div>
-      <div className="panel-body form-grid">
-        {company ? (
-          <>
-            <div className="field"><label className="label" htmlFor="rn">Registration number</label><input id="rn" className="input mono" placeholder="PVT-XXXXXXX" value={f.regNumber} onChange={(e) => setF({ ...f, regNumber: e.target.value })} /></div>
-            <div className="field"><label className="label" htmlFor="kp">Company KRA PIN</label><input id="kp" className="input mono" placeholder="P051234567X" value={f.kraPin} onChange={(e) => setF({ ...f, kraPin: e.target.value.toUpperCase() })} /></div>
-            <div className="field"><label className="label" htmlFor="dr">Director&apos;s full name</label><input id="dr" className="input" value={f.director} onChange={(e) => setF({ ...f, director: e.target.value })} /></div>
-            <div className="field"><label className="label" htmlFor="di">Director&apos;s ID number</label><input id="di" className="input mono" value={f.idNumber} onChange={(e) => setF({ ...f, idNumber: e.target.value.replace(/\D/g, "") })} /></div>
-            {fileField("cert", "Certificate of incorporation", "PDF or photo, up to 10 MB")}
-            {fileField("cr12", "CR12 (issued in the last 12 months)", "Lists directors and shareholders")}
-          </>
-        ) : (
-          <>
-            <div className="field"><label className="label" htmlFor="id">National ID number</label><input id="id" className="input mono" value={f.idNumber} onChange={(e) => setF({ ...f, idNumber: e.target.value.replace(/\D/g, "") })} /></div>
-            <div className="field"><label className="label" htmlFor="kp">KRA PIN</label><input id="kp" className="input mono" placeholder="A012345678Z" value={f.kraPin} onChange={(e) => setF({ ...f, kraPin: e.target.value.toUpperCase() })} /></div>
-            {fileField("id_front", "ID, front and back", "One PDF or two photos")}
-          </>
-        )}
-        {error && <div className="form-error full">{error}</div>}
-      </div>
-      <div className="modal-foot">
-        <button
-          className="btn btn-ink"
-          onClick={() => {
-            if (!/^[AP]\d{9}[A-Z]$/.test(f.kraPin)) return setError("A KRA PIN looks like A012345678Z.");
-            if (f.idNumber.length < 6) return setError("Enter a valid ID number.");
-            if (company && !f.regNumber.trim()) return setError("Enter the registration number.");
-            const need = company ? ["cert", "cr12"] : ["id_front"];
-            if (need.some((k) => !files[k])) return setError("Attach the documents listed above.");
-            setError("");
-            submitVerification();
-            toast("Submitted for review");
-          }}
-        >
-          Submit for review
-        </button>
-      </div>
-    </section>
+    <Link href="/dashboard/verification" className="panel panel-body spread rise" style={{ alignItems: "center" }}>
+      <span className="row">
+        <span className={`st-ic ${tone}`} style={{ width: 30, height: 30, borderRadius: 9 }}>
+          <Icon name="idcard" size={15} />
+        </span>
+        <span>
+          <b style={{ display: "block", fontSize: 14 }}>Account verification</b>
+          <span className="muted" style={{ fontSize: 12.5 }}>{label}</span>
+        </span>
+      </span>
+      <Icon name="chevronRight" size={16} className="dim" />
+    </Link>
   );
 }
 

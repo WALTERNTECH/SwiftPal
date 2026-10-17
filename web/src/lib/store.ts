@@ -108,8 +108,21 @@ export type LedgerEntry = {
 
 export type Balances = { fee: number; float: number };
 
+export type VerificationInfo = {
+  kind: "individual" | "business";
+  name: string;
+  idNumber: string;
+  regNumber?: string;
+  kraPin?: string;
+  files: Record<string, string>;
+  submittedAt: string;
+  reviewedAt?: string;
+};
+
 export type State = {
   version: 1;
+  sampleVersion?: number;
+  verificationInfo?: VerificationInfo | null;
   signedIn: boolean;
   account: Account | null;
   business: Business | null;
@@ -176,6 +189,16 @@ function load() {
     if (raw) {
       const parsed = JSON.parse(raw) as State;
       if (parsed.version === 1) state = { ...empty(), ...parsed };
+      // Older previews carried two weeks of samples; analytics compares 30 days with the 30 before.
+      if (state.account?.emailVerified && state.sampleVersion !== SAMPLE_VERSION) {
+        state = {
+          ...state,
+          sampleVersion: SAMPLE_VERSION,
+          payments: [...state.payments.filter((p) => !p.sample), ...samplePayments()],
+          payouts: [...state.payouts.filter((p) => !p.sample), ...samplePayouts()],
+        };
+        persist();
+      }
     }
   } catch {
     /* private mode or corrupt; start fresh */
@@ -264,6 +287,7 @@ export function verifyEmail() {
               revealed: false,
             },
           ],
+      sampleVersion: SAMPLE_VERSION,
       payments: s.payments.length ? s.payments : samplePayments(),
       payouts: s.payouts.length ? s.payouts : samplePayouts(),
     };
@@ -301,6 +325,7 @@ export function signIn(email: string) {
           revealed: false,
         },
       ],
+      sampleVersion: SAMPLE_VERSION,
       payments: samplePayments(),
       payouts: samplePayouts(),
     };
@@ -389,11 +414,13 @@ export function setDefaultChannel(id: string) {
 export const setMode = (mode: Mode) => set((s) => ({ ...s, mode }));
 export const setAutoCover = (on: boolean) => set((s) => ({ ...s, autoCover: on }));
 export const setLowBalanceAt = (n: number) => set((s) => ({ ...s, lowBalanceAt: n }));
-export const submitVerification = () => set((s) => ({ ...s, verification: "submitted" }));
+export const submitVerification = (info: Omit<VerificationInfo, "submittedAt">) =>
+  set((s) => ({ ...s, verification: "submitted", verificationInfo: { ...info, submittedAt: new Date().toISOString() } }));
 export const approveVerification = () =>
   set((s) => ({
     ...s,
     verification: "approved",
+    verificationInfo: s.verificationInfo ? { ...s.verificationInfo, reviewedAt: new Date().toISOString() } : s.verificationInfo,
     keys: s.keys.map((k) => (k.mode === "live" && !k.scopes.includes("payouts:write") ? { ...k, scopes: [...k.scopes, "payouts:write"] } : k)),
   }));
 export const updateAccount = (a: Partial<Account>) => set((s) => (s.account ? { ...s, account: { ...s.account, ...a } } : s));
@@ -612,61 +639,104 @@ function samplePhone(r: () => number) {
   return pre + String(Math.floor(r() * 1e8)).padStart(8, "0");
 }
 
+const SAMPLE_VERSION = 5;
+const DAYS = 60;
+// Share of a day's prompts in each hour: quiet nights, a lunch peak and an evening peak.
+const HOUR_WEIGHTS = [1, 0.5, 0.3, 0.2, 0.3, 0.8, 2, 3.5, 5, 5.5, 6, 7, 9, 8.5, 6.5, 6, 6.5, 8, 10, 11, 9, 6.5, 4, 2];
+
+function pickHour(r: () => number) {
+  const total = HOUR_WEIGHTS.reduce((a, b) => a + b, 0);
+  let x = r() * total;
+  for (let h = 0; h < 24; h++) {
+    x -= HOUR_WEIGHTS[h];
+    if (x <= 0) return h;
+  }
+  return 12;
+}
+
+function dayStart(daysAgo: number) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() - daysAgo * 86_400_000;
+}
+
 function samplePayments(): Payment[] {
   const r = seeded(7);
   const now = Date.now();
-  const amounts = [150, 250, 300, 450, 500, 650, 800, 1000, 1200, 1250, 1500, 2000, 2400, 3500, 4999, 7800, 12000];
+  const amounts = [150, 250, 300, 450, 500, 500, 650, 800, 800, 1000, 1000, 1200, 1250, 1500, 1500, 2000, 2400, 3500, 4999, 7500];
   const out: Payment[] = [];
-  for (let i = 0; i < 64; i++) {
-    const roll = r();
-    const status: PayStatus = roll < 0.74 ? "succeeded" : roll < 0.86 ? "cancelled" : roll < 0.94 ? "expired" : "failed";
-    const amount = amounts[Math.floor(r() * amounts.length)];
-    const createdAt = new Date(now - (i * 5 + r() * 3) * 3_600_000).toISOString();
-    const f = stkFee(amount) ?? 0;
-    out.push({
-      id: `pay_01JSAMPLE${String(1000 + i)}${rand(2)}`,
-      mode: "test",
-      phone: samplePhone(r),
-      amount,
-      reference: `ORD-${String(8841 - i)}`,
-      channel: "till_5521093",
-      status,
-      receipt: status === "succeeded" ? receipt() : null,
-      fee: f,
-      feeCharged: status === "succeeded" && f > 0,
-      failureCode: status === "failed" ? "1" : status === "cancelled" ? "1032" : status === "expired" ? "1037" : null,
-      createdAt,
-      sample: true,
-    });
+  let n = 0;
+  for (let d = DAYS - 1; d >= 0; d--) {
+    const start = dayStart(d);
+    const weekday = new Date(start).getDay();
+    const weekend = weekday === 0 || weekday === 6;
+    // Volume grows across the month and dips at weekends.
+    const count = Math.round(3 + (DAYS - d) * 0.17 + (weekend ? -1 : 1) + r() * 2.5);
+    for (let k = 0; k < count; k++) {
+      const t = start + pickHour(r) * 3_600_000 + Math.floor(r() * 3_600_000);
+      if (t > now) continue;
+      const roll = r();
+      const status: PayStatus = roll < 0.76 ? "succeeded" : roll < 0.88 ? "cancelled" : roll < 0.95 ? "expired" : "failed";
+      const amount = amounts[Math.floor(r() * amounts.length)];
+      const f = stkFee(amount) ?? 0;
+      out.push({
+        id: `pay_01JSAMPLE${String(1000 + n)}${rand(2)}`,
+        mode: "test",
+        phone: samplePhone(r),
+        amount,
+        reference: `ORD-${String(9200 - n)}`,
+        channel: "till_5521093",
+        status,
+        receipt: status === "succeeded" ? receipt() : null,
+        fee: f,
+        feeCharged: status === "succeeded" && f > 0,
+        failureCode: status === "failed" ? "1" : status === "cancelled" ? "1032" : status === "expired" ? "1037" : null,
+        createdAt: new Date(t).toISOString(),
+        sample: true,
+      });
+      n++;
+    }
   }
-  return out;
+  return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 function samplePayouts(): Payout[] {
   const r = seeded(19);
   const now = Date.now();
-  const amounts = [500, 1000, 1500, 2500, 3500, 5000, 8000, 12500, 18500, 21000];
-  const reasons = ["withdrawal", "salary", "refund", "commission"];
+  const amounts = [500, 1000, 1500, 2500, 3500, 5000, 8000, 12500];
+  const reasons = ["withdrawal", "refund", "commission"];
   const out: Payout[] = [];
-  for (let i = 0; i < 26; i++) {
+  let n = 0;
+  const push = (t: number, amount: number, reason: string, batch: string | null) => {
     const phone = samplePhone(r);
-    const amount = amounts[Math.floor(r() * amounts.length)];
-    const ok = r() > 0.08;
+    const ok = r() > 0.07;
     out.push({
-      id: `po_01JSAMPLE${String(500 + i)}${rand(2)}`,
+      id: `po_01JSAMPLE${String(500 + n)}${rand(2)}`,
       mode: "test",
       phone,
       recipient: ok ? pickName(phone) : null,
       amount,
-      reference: `WD-${20931 - i}`,
-      reason: reasons[Math.floor(r() * reasons.length)],
+      reference: batch ? `EMP-${String(100 + n)}` : `WD-${21000 - n}`,
+      reason,
       status: ok ? "succeeded" : "failed",
       receipt: ok ? receipt() : null,
       fee: b2cFee(amount) ?? 0,
-      batch: i >= 6 && i < 12 ? "bat_01JPAYROLL0926" : null,
-      createdAt: new Date(now - (i * 6.5 + r() * 4) * 3_600_000).toISOString(),
+      batch,
+      createdAt: new Date(t).toISOString(),
       sample: true,
     });
+    n++;
+  };
+  for (let d = DAYS - 1; d >= 0; d--) {
+    const start = dayStart(d);
+    const count = Math.floor(1 + r() * 3);
+    for (let k = 0; k < count; k++) {
+      const t = start + (8 + Math.floor(r() * 12)) * 3_600_000 + Math.floor(r() * 3_600_000);
+      if (t <= now) push(t, amounts[Math.floor(r() * amounts.length)], reasons[Math.floor(r() * reasons.length)], null);
+    }
   }
-  return out;
+  // One payroll run, three days ago.
+  const payday = dayStart(3) + 10 * 3_600_000;
+  [18500, 21000, 16000, 24500, 19000, 22000].forEach((a) => push(payday, a, "salary", "bat_01JPAYROLL1002"));
+  return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }

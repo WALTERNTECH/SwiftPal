@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
-import { PayoutModal } from "@/components/dash/modals";
+import { useActions } from "@/components/dash/actions";
+import { kes } from "@/components/dash/charts";
 import { downloadCsv, Empty, Modal, PageHeader, PayoutBadge, useToast } from "@/components/dash/ui";
 import { dateTime, maskPhone, money, normalisePhone } from "@/lib/format";
 import { b2cFee } from "@/lib/pricing";
@@ -11,7 +12,7 @@ import { newId, simulatePayout, useStore } from "@/lib/store";
 
 export default function Payouts() {
   const s = useStore();
-  const [single, setSingle] = useState(false);
+  const { open } = useActions();
   const [bulk, setBulk] = useState(false);
   const [q, setQ] = useState("");
   const blocked = s.mode === "live" && s.verification !== "approved";
@@ -27,13 +28,13 @@ export default function Payouts() {
     <>
       <PageHeader
         title="Payouts"
-        sub="B2C disbursements from your payout float to any Safaricom number."
+        sub="B2C disbursements"
         actions={
           <>
             <button className="btn btn-line" disabled={blocked} onClick={() => setBulk(true)}>
               <Icon name="upload" size={15} /> Bulk upload
             </button>
-            <button className="btn btn-ink" disabled={blocked} onClick={() => setSingle(true)}>
+            <button className="btn btn-pine" disabled={blocked} onClick={() => open("payout")}>
               <Icon name="plus" size={15} /> Send payout
             </button>
           </>
@@ -41,19 +42,25 @@ export default function Payouts() {
       />
 
       {blocked && (
-        <div className="callout warn">
-          <Icon name="shield" size={16} />
+        <div className="callout warn rise">
+          <Icon name="idcard" size={16} />
           <span className="grow">
-            <b>Live payouts are off until your business details are approved.</b> Payouts move money we hold for you, so we have to know
-            who you are. It usually takes a few hours.
+            <b>{s.verification === "submitted" ? "Verification in review." : "Live payouts need a verified account."}</b>
           </span>
-          <Link href="/dashboard/settings?tab=verification" className="btn btn-line btn-sm">
-            {s.verification === "submitted" ? "View status" : "Submit details"}
+          <Link href="/dashboard/verification" className="btn btn-line btn-sm">
+            {s.verification === "submitted" ? "View status" : "Verify now"}
           </Link>
         </div>
       )}
 
-      <section className="panel">
+      <dl className="mini-stats rise">
+        <div><dt>Float available</dt><dd>{kes(s.balances[s.mode].float)}</dd></div>
+        <div><dt>Sent</dt><dd>{rows.filter((p) => p.status === "succeeded").length}</dd></div>
+        <div><dt>Total paid out</dt><dd>{kes(rows.filter((p) => p.status === "succeeded").reduce((a, p) => a + p.amount, 0))}</dd></div>
+        <div><dt>Failed · refunded</dt><dd>{rows.filter((p) => p.status === "failed").length}</dd></div>
+      </dl>
+
+      <section className="panel rise" style={{ ["--d" as string]: "60ms" }}>
         <div className="filters">
           <div className="search">
             <Icon name="search" size={15} />
@@ -119,7 +126,6 @@ export default function Payouts() {
         )}
       </section>
 
-      <PayoutModal open={single} onClose={() => setSingle(false)} />
       <BulkModal open={bulk} onClose={() => setBulk(false)} />
     </>
   );
