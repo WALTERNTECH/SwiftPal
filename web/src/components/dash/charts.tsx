@@ -43,6 +43,8 @@ function niceMax(v: number) {
 export function Sparkline({ values, blue }: { values: number[]; blue?: boolean }) {
   const w = 84;
   const h = 26;
+  // Until analytics load there are no points; draw a flat baseline rather than an empty path.
+  if (values.length < 2) values = [0, 0];
   const max = Math.max(...values, 1);
   const pts = values.map((v, i) => [(i / Math.max(1, values.length - 1)) * w, h - 2 - (v / max) * (h - 4)] as const);
   const line = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");

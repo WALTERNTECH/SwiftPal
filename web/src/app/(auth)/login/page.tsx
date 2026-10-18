@@ -6,7 +6,7 @@ import { useState } from "react";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { VerifyCode } from "@/components/auth/VerifyCode";
-import { api, clearCache, nextStep, type ApiError, type Me } from "@/lib/api";
+import { api, clearCache, nextStep, type ApiError, type Me, useWaking } from "@/lib/api";
 import { phoneHint } from "@/lib/format";
 
 type LoginResult = { otp_required: true; phone_hint: string; error?: string } | { otp_required: false };
@@ -17,6 +17,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const waking = useWaking();
   const [otp, setOtp] = useState<{ hint: string; error?: string } | null>(null);
 
   async function finish() {
@@ -91,6 +92,7 @@ export default function Login() {
         <button className="btn btn-pine btn-lg btn-block" disabled={busy}>
           {busy ? <span className="spinner" /> : "Continue"}
         </button>
+        {busy && waking && <p className="hint" style={{ textAlign: "center" }}>Starting up. This can take up to a minute.</p>}
       </form>
     </AuthShell>
   );

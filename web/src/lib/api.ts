@@ -4,7 +4,8 @@
 // (next.config.ts). Responses are cached per path; mutations invalidate by
 // prefix and every subscriber refetches.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { SITE } from "./site";
 
 export type Mode = "test" | "live";
 export type Account = "fee" | "float";
@@ -153,24 +154,61 @@ export class ApiError extends Error {
   }
 }
 
-// The API sleeps when idle on Render's free plan. While it starts, Render answers
-// the proxy with its own 502/503/504 page and the request never reaches us, so
-// it is safe to wait for /health and send it again.
+// The API sleeps when idle on Render's free plan. Only a request from outside
+// Render wakes it: calls the web server forwards get Render's own 502/503/504
+// page and never reach the API. So the browser pings the API directly (an
+// opaque no-cors GET is enough), then waits for /health through the proxy and
+// sends the original request again; it never reached the API the first time.
+const API_ORIGIN = SITE.apiBase.replace(/\/v1$/, "");
 let waking: Promise<void> | null = null;
+let wakingNow = false;
+const wakeSubs = new Set<() => void>();
+const setWaking = (v: boolean) => {
+  wakingNow = v;
+  wakeSubs.forEach((f) => f());
+};
+
 export function wakeApi(): Promise<void> {
   waking ??= (async () => {
+    const ping = () => fetch(`${API_ORIGIN}/health`, { mode: "no-cors", cache: "no-store" }).catch(() => {});
+    const healthy = async () => {
+      try {
+        return (await fetch("/backend/health", { cache: "no-store" })).ok;
+      } catch {
+        return false;
+      }
+    };
+    if (await healthy()) return;
+    setWaking(true);
+    ping();
+    let pinged = Date.now();
     const until = Date.now() + 120_000;
     while (Date.now() < until) {
-      try {
-        if ((await fetch("/backend/health", { cache: "no-store" })).ok) return;
-      } catch {
-        /* still starting */
-      }
       await new Promise((r) => setTimeout(r, 2500));
+      if (await healthy()) return;
+      if (Date.now() - pinged > 20_000) {
+        ping();
+        pinged = Date.now();
+      }
     }
     throw new ApiError(503, "unavailable", "SwiftPal is unavailable right now. Try again in a minute.");
-  })().finally(() => setTimeout(() => (waking = null), 0));
+  })().finally(() => {
+    setWaking(false);
+    setTimeout(() => (waking = null), 0);
+  });
   return waking;
+}
+
+/** True while the API is being started, so a form can say why it's taking a moment. */
+export function useWaking() {
+  return useSyncExternalStore(
+    (f) => {
+      wakeSubs.add(f);
+      return () => wakeSubs.delete(f);
+    },
+    () => wakingNow,
+    () => false,
+  );
 }
 
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; form?: FormData } = {}, attempt = 0): Promise<T> {
@@ -192,7 +230,7 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
   if (!res.ok) {
     const e = (json as { error?: { code: string; message: string; details?: Record<string, unknown> } } | null)?.error;
     if (!e && (res.status === 502 || res.status === 503 || res.status === 504)) {
-      if (attempt >= 2) throw new ApiError(res.status, "unavailable", "SwiftPal is unavailable right now. Try again in a minute.");
+      if (attempt >= 1) throw new ApiError(res.status, "unavailable", "SwiftPal is unavailable right now. Try again in a minute.");
       await wakeApi();
       return api<T>(path, opts, attempt + 1);
     }

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { PasswordInput, passwordScore } from "@/components/auth/PasswordInput";
-import { api, clearCache, type ApiError } from "@/lib/api";
+import { api, clearCache, type ApiError, useWaking } from "@/lib/api";
 import { normalisePhone } from "@/lib/format";
 
 type Errors = Partial<Record<"firstName" | "lastName" | "email" | "phone" | "password" | "terms", string>>;
@@ -17,6 +17,7 @@ export default function SignUp() {
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
+  const waking = useWaking();
 
   const up = (k: keyof typeof f) => (v: string) => {
     setF((p) => ({ ...p, [k]: v }));
@@ -118,6 +119,7 @@ export default function SignUp() {
         <button className="btn btn-pine btn-lg btn-block" disabled={busy}>
           {busy ? <span className="spinner" /> : "Create account"}
         </button>
+        {busy && waking && <p className="hint" style={{ textAlign: "center" }}>Starting up. This can take up to a minute.</p>}
       </form>
     </AuthShell>
   );
