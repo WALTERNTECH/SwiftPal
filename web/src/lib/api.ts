@@ -10,7 +10,7 @@ export type Mode = "test" | "live";
 export type Account = "fee" | "float";
 
 // ---------- shapes returned by the API ----------
-export type User = { id: string; email: string; phone: string; first_name: string; last_name: string; role: string; email_verified_at: string | null; created_at: string };
+export type User = { id: string; email: string; phone: string; first_name: string; last_name: string; role: string; email_verified_at: string | null; phone_verified_at: string | null; created_at: string };
 export type Merchant = {
   id: string;
   account_code: string;
@@ -282,6 +282,10 @@ export function useMode(): Mode {
 }
 
 export const useMe = () => useApi<Me>("/app/me");
+
+/** Where a signed-in account belongs: phone code, email code, onboarding, then the dashboard. */
+export const nextStep = (me: Me) =>
+  !me.user.phone_verified_at ? "/verify-phone" : !me.user.email_verified_at ? "/verify-email" : !me.merchant.onboarding_done ? "/onboarding" : "/dashboard";
 
 /** Inside the dashboard shell, which renders nothing until /app/me has loaded. */
 export function useAccount(): Me {

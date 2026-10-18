@@ -1,7 +1,7 @@
 import type { App } from "./app.js";
 import { loadConfig } from "./config.js";
 import { pgDb, pgliteDb } from "./db.js";
-import { makeMailer, makeStorage } from "./infra.js";
+import { makeMailer, makeSms, makeStorage } from "./infra.js";
 import { migrate } from "./migrate.js";
 import { DarajaClient } from "./mpesa/daraja.js";
 import { SandboxDriver } from "./mpesa/sandbox.js";
@@ -21,6 +21,7 @@ export async function createApp(overrides: Partial<App> = {}): Promise<App> {
     db,
     storage: overrides.storage ?? makeStorage(cfg, db),
     mail: overrides.mail ?? makeMailer(cfg, log),
+    sms: overrides.sms ?? makeSms(cfg, log),
     mpesa: { test: null, live: null },
   } as unknown as App;
   // The sandbox answers through the same handlers a real Safaricom callback reaches.

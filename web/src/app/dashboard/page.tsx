@@ -113,7 +113,6 @@ export default function Overview() {
 
       <div className="grid-2">
         <section className="bal-hero rise" style={{ ["--d" as string]: "40ms" }}>
-          <div className="bal-orb" />
           <div className="bal-top">
             <span className="eyebrow">Balances · {mode}</span>
             <span className="bal-chip">
@@ -142,11 +141,11 @@ export default function Overview() {
             </div>
           </div>
           <div className="bal-actions">
-            <button className="bal-btn primary" onClick={() => open("topup-fee")}>
+            <button className="btn btn-pine" onClick={() => open("topup-fee")}>
               <Icon name="plus" size={14} /> Top up
             </button>
-            <button className="bal-btn" onClick={() => open("topup-float")}>Fund float</button>
-            <button className="bal-btn" onClick={() => open("withdraw")}>Withdraw</button>
+            <button className="btn btn-line" onClick={() => open("topup-float")}>Fund float</button>
+            <button className="btn btn-line" onClick={() => open("withdraw")}>Withdraw</button>
           </div>
         </section>
 

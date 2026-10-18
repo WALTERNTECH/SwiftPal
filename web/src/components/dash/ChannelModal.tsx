@@ -116,7 +116,7 @@ export function ChannelModal({ open, onClose, retry }: { open: boolean; onClose:
             </button>
           </>
         ) : stage === "done" ? (
-          <button className="btn btn-ink" onClick={onClose}>Done</button>
+          <button className="btn btn-pine" onClick={onClose}>Done</button>
         ) : undefined
       }
     >

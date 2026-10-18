@@ -238,7 +238,7 @@ function Wizard() {
               <Icon name="arrowLeft" size={14} /> Back
             </button>
             {step < 3 ? (
-              <button className="btn btn-ink" onClick={next}>
+              <button className="btn btn-pine" onClick={next}>
                 Continue <Icon name="arrowRight" size={14} className="arrow" />
               </button>
             ) : (

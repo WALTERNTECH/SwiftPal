@@ -14,6 +14,10 @@ export interface Mailer {
   send(to: string, subject: string, text: string): Promise<void>;
 }
 
+export interface Sms {
+  send(to: string, text: string): Promise<void>;
+}
+
 export type Logger = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 
 /** Everything a service needs, passed explicitly so tests can swap any part. */
@@ -23,6 +27,7 @@ export type App = {
   mpesa: { test: MpesaDriver; live: MpesaDriver | null };
   storage: Storage;
   mail: Mailer;
+  sms: Sms;
   log: Logger;
 };
 

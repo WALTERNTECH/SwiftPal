@@ -9,6 +9,7 @@ import { downloadCsv, Empty, Modal, PageHeader, PayoutBadge, useToast } from "@/
 import { api, invalidate, useAccount, useApi, useMode, usePaged, type ApiError, type Payout } from "@/lib/api";
 import { dateTime, maskPhone, money, normalisePhone } from "@/lib/format";
 import { b2cFee } from "@/lib/pricing";
+import { SmsConfirm } from "@/components/dash/SmsConfirm";
 
 const PAGE = 20;
 const REASONS = ["salary", "withdrawal", "refund", "commission", "promotion", "other"];
@@ -203,6 +204,7 @@ function BulkModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [hint, setHint] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const bal = me.balances[mode];
   const valid = rows.filter((r) => !r.error);
@@ -219,20 +221,31 @@ function BulkModal({ open, onClose }: { open: boolean; onClose: () => void }) {
     setRows([]);
     setName("");
     setError("");
+    setHint(null);
   }
 
-  async function send() {
+  const items = valid.map((r) => ({ phone: r.phone!, amount: r.amount, reference: r.reference, reason: r.reason }));
+
+  async function send(code?: string) {
+    await api("/app/payouts/batches", { body: { mode, reference: name.replace(/\.csv$/i, "").slice(0, 40) || undefined, items, code } });
+    invalidate("/app/payouts", "/app/me", "/app/wallet", "/app/ledger");
+    toast(`${valid.length} payouts queued · ${money(total)}`);
+    reset();
+    onClose();
+  }
+
+  /** Live batches are confirmed with a code texted to the account's number. */
+  async function start() {
     if (total > bal.payout_float.available) return setError(`Float is ${money(bal.payout_float.available)} and this batch needs ${money(total)}. Nothing was sent.`);
     setBusy(true);
     setError("");
     try {
-      await api("/app/payouts/batches", {
-        body: { mode, reference: name.replace(/\.csv$/i, "").slice(0, 40) || undefined, items: valid.map((r) => ({ phone: r.phone!, amount: r.amount, reference: r.reference, reason: r.reason })) },
-      });
-      invalidate("/app/payouts", "/app/me", "/app/wallet", "/app/ledger");
-      toast(`${valid.length} payouts queued · ${money(total)}`);
-      reset();
-      onClose();
+      if (mode === "test") await send();
+      else {
+        const c = await api<{ required: boolean; phone_hint?: string }>("/app/confirmations", { body: { action: "batch", mode, items } });
+        if (c.required) setHint(c.phone_hint!);
+        else await send();
+      }
     } catch (err) {
       setError(`${(err as ApiError).message} Nothing was sent.`);
     }
@@ -246,17 +259,26 @@ function BulkModal({ open, onClose }: { open: boolean; onClose: () => void }) {
       title="Bulk payout"
       width={640}
       footer={
-        rows.length ? (
+        hint ? (
+          <button className="btn btn-line" onClick={() => setHint(null)}>Back</button>
+        ) : rows.length ? (
           <>
             <button className="btn btn-line" onClick={reset}>Choose another file</button>
-            <button className="btn btn-ink" disabled={!valid.length || busy} onClick={send}>
+            <button className="btn btn-pine" disabled={!valid.length || busy} onClick={start}>
               {busy ? <span className="spinner" /> : <>Pay {valid.length} recipients · {money(total)}</>}
             </button>
           </>
         ) : undefined
       }
     >
-      {!rows.length ? (
+      {hint ? (
+        <SmsConfirm
+          hint={hint}
+          summary={`Pay ${valid.length} recipients ${money(total)} in total`}
+          onCode={send}
+          onResend={() => api("/app/confirmations", { body: { action: "batch", mode, items } })}
+        />
+      ) : !rows.length ? (
         <>
           <div
             className={`dropzone ${over ? "over" : ""}`}

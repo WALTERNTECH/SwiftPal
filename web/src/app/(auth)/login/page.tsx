@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { PasswordInput } from "@/components/auth/PasswordInput";
-import { TypedCode } from "@/components/TypedCode";
-import { api, clearCache, type ApiError, type Me } from "@/lib/api";
+import { VerifyCode } from "@/components/auth/VerifyCode";
+import { api, clearCache, nextStep, type ApiError, type Me } from "@/lib/api";
+import { phoneHint } from "@/lib/format";
+
+type LoginResult = { otp_required: true; phone_hint: string; error?: string } | { otp_required: false };
 
 export default function Login() {
   const router = useRouter();
@@ -14,64 +17,67 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [otp, setOtp] = useState<{ hint: string; error?: string } | null>(null);
+
+  async function finish() {
+    const me = await api<Me>("/app/me");
+    router.push(nextStep(me));
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()) || !password) {
-      setError("Enter the email and password you signed up with.");
-      return;
-    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()) || !password) return setError("Enter your email and password.");
     setBusy(true);
     setError("");
     try {
       clearCache();
-      await api("/app/auth/login", { body: { email: email.trim().toLowerCase(), password } });
-      const me = await api<Me>("/app/me");
-      router.push(!me.user.email_verified_at ? "/verify-email" : !me.merchant.onboarding_done ? "/onboarding" : "/dashboard");
+      const r = await api<LoginResult>("/app/auth/login", { body: { email: email.trim().toLowerCase(), password } });
+      if (r.otp_required) {
+        setOtp({ hint: r.phone_hint, error: r.error });
+        setBusy(false);
+      } else await finish();
     } catch (err) {
       setError((err as ApiError).message);
       setBusy(false);
     }
   }
 
+  if (otp) {
+    return (
+      <AuthShell>
+        <VerifyCode
+          title="Enter your sign-in code"
+          sentTo={<b className="mono">{phoneHint(otp.hint)}</b>}
+          initialError={otp.error}
+          onVerify={async (code) => {
+            await api("/app/auth/login/verify", { body: { code } });
+            await finish();
+          }}
+          onResend={() => api("/app/auth/login/resend", { method: "POST" })}
+          aside={
+            <button type="button" className="text-btn quiet" onClick={() => { setOtp(null); setPassword(""); }}>
+              Use another account
+            </button>
+          }
+        />
+      </AuthShell>
+    );
+  }
+
   return (
     <AuthShell
-      topRight={
-        <span className="muted" style={{ fontSize: 14 }}>
-          New to SwiftPal? <Link className="link" href="/signup">Create an account</Link>
-        </span>
-      }
-      side={
+      alt={
         <>
-          <div>
-            <div className="eyebrow">Dashboard</div>
-            <h2 style={{ marginTop: 12 }}>Balances, payments and webhook deliveries.</h2>
-          </div>
-          <TypedCode
-            cps={110}
-            tabs={[
-              {
-                label: "GET /v1/balance",
-                lang: "json",
-                code: `{
-  "fee_credit":   { "available": 1847.5, "held": 12.5 },
-  "payout_float": { "available": 84200,  "held": 3500 },
-  "currency": "KES"
-}`,
-              },
-            ]}
-          />
+          New to SwiftPal? <Link className="link" href="/signup">Create an account</Link>
         </>
       }
     >
       <form className="auth-form" onSubmit={submit} noValidate>
-        <div>
+        <div className="auth-head">
           <h1>Sign in</h1>
-          <p className="sub">Welcome back.</p>
         </div>
-        {error && <div className="form-error" role="alert">{error}</div>}
         <div className="field">
-          <label className="label" htmlFor="email">Email</label>
+          <label className="label" htmlFor="email">Business email</label>
           <input id="email" className="input" type="email" autoComplete="email" value={email} onChange={(e) => { setEmail(e.target.value); setError(""); }} />
         </div>
         <div className="field">
@@ -81,8 +87,9 @@ export default function Login() {
           </div>
           <PasswordInput id="password" autoComplete="current-password" value={password} onChange={(v) => { setPassword(v); setError(""); }} />
         </div>
-        <button className="btn btn-ink btn-lg btn-block" disabled={busy}>
-          {busy ? <span className="spinner" /> : "Sign in"}
+        {error && <div className="form-error" role="alert">{error}</div>}
+        <button className="btn btn-pine btn-lg btn-block" disabled={busy}>
+          {busy ? <span className="spinner" /> : "Continue"}
         </button>
       </form>
     </AuthShell>

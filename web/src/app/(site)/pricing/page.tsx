@@ -144,8 +144,12 @@ export default function Pricing() {
               </p>
             </div>
             <p className="hint">
-              Optional auto-cover takes fees from payout float when fee credit runs out. Volume pricing above KES 10M a month:{" "}
-              <a className="link" href={`mailto:${SITE.salesEmail}`}>{SITE.salesEmail}</a>.
+              Optional auto-cover takes fees from payout float when fee credit runs out.
+              {SITE.salesEmail && (
+                <>
+                  {" "}Volume pricing above KES 10M a month: <a className="link" href={`mailto:${SITE.salesEmail}`}>{SITE.salesEmail}</a>.
+                </>
+              )}
             </p>
           </div>
         </div>

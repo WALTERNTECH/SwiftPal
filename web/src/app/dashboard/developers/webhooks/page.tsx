@@ -64,7 +64,7 @@ export default function Webhooks() {
         title="Webhooks"
         sub="We POST a signed event to your endpoint every time a payment, payout or balance changes state."
         actions={
-          <button className="btn btn-ink" onClick={() => setAdding(true)}>
+          <button className="btn btn-pine" onClick={() => setAdding(true)}>
             <Icon name="plus" size={15} /> Add endpoint
           </button>
         }
@@ -130,7 +130,7 @@ export default function Webhooks() {
             icon="webhook"
             title="No endpoints yet"
             body="Add an HTTPS URL on your server. Without one you'll have to poll for results."
-            action={<button className="btn btn-ink" onClick={() => setAdding(true)}>Add endpoint</button>}
+            action={<button className="btn btn-pine" onClick={() => setAdding(true)}>Add endpoint</button>}
           />
         )}
       </section>
@@ -232,7 +232,7 @@ function AddEndpoint({ open, onClose }: { open: boolean; onClose: () => void }) 
 
   if (secret) {
     return (
-      <Modal open={open} onClose={onClose} title="Endpoint added" footer={<button className="btn btn-ink" onClick={onClose}>Done</button>}>
+      <Modal open={open} onClose={onClose} title="Endpoint added" footer={<button className="btn btn-pine" onClick={onClose}>Done</button>}>
         <p className="muted" style={{ fontSize: 13.5 }}>
           Verify the <code className="inline-code">SwiftPal-Signature</code> header on every request with this secret. It&apos;s also under the endpoint&apos;s row.
         </p>
@@ -255,7 +255,7 @@ function AddEndpoint({ open, onClose }: { open: boolean; onClose: () => void }) 
       footer={
         <>
           <button className="btn btn-line" onClick={onClose}>Cancel</button>
-          <button className="btn btn-ink" onClick={add} disabled={busy}>
+          <button className="btn btn-pine" onClick={add} disabled={busy}>
             {busy ? <span className="spinner" /> : "Add endpoint"}
           </button>
         </>
@@ -263,7 +263,7 @@ function AddEndpoint({ open, onClose }: { open: boolean; onClose: () => void }) 
     >
       <div className="field">
         <label className="label" htmlFor="wh-url">Endpoint URL</label>
-        <input id="wh-url" className="input mono" placeholder="https://api.yourapp.co.ke/webhooks/swiftpal" value={url} onChange={(e) => { setUrl(e.target.value); setError(""); }} />
+        <input id="wh-url" className="input mono" placeholder="https://api.yourapp.com/webhooks/swiftpal" value={url} onChange={(e) => { setUrl(e.target.value); setError(""); }} />
       </div>
       <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
         <div className="label-row">

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Mode } from "../app.js";
 import { ApiError, normalisePhone } from "../lib.js";
 
-export const DOCS = "https://swiftpal-web.onrender.com/docs/errors";
+export const DOCS = `${(process.env.WEB_URL || "https://swiftpal-web.onrender.com").replace(/\/$/, "")}/docs/errors`;
 
 export function errorBody(e: ApiError) {
   return {

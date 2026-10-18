@@ -6,7 +6,7 @@ import { CodeBlock, CopyButton } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
 import { Logo } from "@/components/Logo";
 import { PhonePrompt, type PromptStage } from "@/components/PhonePrompt";
-import { api, invalidate, useApi, useMe, usePaymentWatch, type ApiError, type ApiKey, type Channel, type Merchant, type Payment } from "@/lib/api";
+import { api, invalidate, nextStep, useApi, useMe, usePaymentWatch, type ApiError, type ApiKey, type Channel, type Merchant, type Payment } from "@/lib/api";
 import { maskPhone } from "@/lib/format";
 import { STARTER_CREDIT } from "@/lib/pricing";
 import { stkSnippets } from "@/lib/snippets";
@@ -30,7 +30,7 @@ export default function Onboarding() {
 
   useEffect(() => {
     if (error?.status === 401) router.replace("/signup");
-    else if (me && !me.user.email_verified_at) router.replace("/verify-email");
+    else if (me && (!me.user.phone_verified_at || !me.user.email_verified_at)) router.replace(nextStep(me));
   }, [error, me, router]);
 
   if (!me) {
@@ -192,7 +192,7 @@ function BusinessStep({ merchant, onNext }: { merchant: Merchant; onNext: () => 
 
       <div className="onb-actions">
         <span />
-        <button className="btn btn-ink btn-lg" disabled={busy}>
+        <button className="btn btn-pine btn-lg" disabled={busy}>
           {busy ? <span className="spinner" /> : <>Continue <Icon name="arrowRight" size={15} /></>}
         </button>
       </div>
@@ -405,12 +405,12 @@ function ChannelStep({ phone, businessName, existing, onBack, onNext }: { phone:
             </button>
           )}
           {vs === "form" && (
-            <button className="btn btn-ink btn-lg" onClick={send}>
+            <button className="btn btn-pine btn-lg" onClick={send}>
               Send KES 1 prompt
             </button>
           )}
           {vs === "verified" && (
-            <button className="btn btn-ink btn-lg" onClick={onNext}>
+            <button className="btn btn-pine btn-lg" onClick={onNext}>
               Continue <Icon name="arrowRight" size={15} />
             </button>
           )}
@@ -506,7 +506,7 @@ function KeysStep({ onBack, onDone }: { onBack: () => void; onDone: () => void }
         <button className="btn btn-ghost" onClick={onBack}>
           <Icon name="arrowLeft" size={15} /> Back
         </button>
-        <button className="btn btn-ink btn-lg" onClick={onDone}>
+        <button className="btn btn-pine btn-lg" onClick={onDone}>
           Open dashboard <Icon name="arrowRight" size={15} />
         </button>
       </div>

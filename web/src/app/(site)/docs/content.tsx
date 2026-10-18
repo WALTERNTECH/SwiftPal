@@ -142,7 +142,7 @@ export const DOCS: DocPage[] = [
     "type": "balance_error",
     "code": "insufficient_fee_credit",
     "message": "Fee credit is KES 1.50 and this request needs KES 2.50 held. Top up or enable auto-cover.",
-    "doc_url": "https://${SITE.domain}/docs/errors#insufficient_fee_credit"
+    "doc_url": "${SITE.url}/docs/errors#insufficient_fee_credit"
   }
 }`,
             },

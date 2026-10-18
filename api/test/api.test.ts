@@ -4,7 +4,7 @@ import { after, before, describe, it } from "node:test";
 import { hmacHex } from "../src/lib.js";
 import { dispatchQueued } from "../src/services/payouts.js";
 import { deliverDue } from "../src/services/webhooks.js";
-import { boot, form, JPEG, merchant, stop, waitFor, type Ctx } from "./helpers.js";
+import { boot, form, JPEG, mailCode, merchant, smsCode, stop, waitFor, type Ctx } from "./helpers.js";
 
 let c: Ctx;
 before(async () => {
@@ -22,20 +22,32 @@ const paymentStatus = (m: Awaited<ReturnType<typeof merchant>>, id: string) => a
   return p.status !== "pending" ? p : null;
 };
 
+/** Pretends live M-Pesa is configured and the live float is funded, for code checks that run before any money moves. */
+async function liveReady(m: Awaited<ReturnType<typeof merchant>>) {
+  const before = c.app.mpesa.live;
+  c.app.mpesa.live ??= c.app.mpesa.test;
+  await c.app.db.query(`update balances set available_cents = 10000000 where merchant_id = $1 and mode = 'live' and account = 'float'`, [m.merchantId]);
+  return () => void (c.app.mpesa.live = before);
+}
+
 describe("accounts", () => {
-  it("signs up, rejects a wrong code, verifies, and issues a revealable test key", async () => {
+  it("signs up, proves the phone by SMS and the email by code, and issues a revealable test key", async () => {
     const email = "amina@example.co.ke";
-    const res = await c.api.inject({ method: "POST", url: "/app/auth/signup", payload: { first_name: "Amina", last_name: "Otieno", email, phone: "+254712345678", password: "correct-horse-battery" } });
+    const res = await c.api.inject({ method: "POST", url: "/app/auth/signup", payload: { first_name: "Amina", last_name: "Otieno", email, phone: "+254712345670", password: "correct-horse-battery" } });
     assert.equal(res.statusCode, 201);
     const cookie = String(res.headers["set-cookie"]);
     assert.match(cookie, /HttpOnly/);
     const h = { cookie: cookie.split(";")[0], "x-requested-with": "SwiftPal" };
-    const blocked = await c.api.inject({ method: "GET", url: "/app/keys", headers: h });
-    assert.equal(blocked.json().error.code, "email_unverified");
+    assert.equal((await c.api.inject({ method: "GET", url: "/app/keys", headers: h })).json().error.code, "phone_unverified");
+    assert.equal(c.mails.filter((m) => m.to === email).length, 0, "no email code until the phone is proven");
+    const wrongSms = await c.api.inject({ method: "POST", url: "/app/auth/verify-phone", payload: { code: "000000" }, headers: h });
+    assert.equal(wrongSms.json().error.code, "wrong_code");
+    const phoneOk = await c.api.inject({ method: "POST", url: "/app/auth/verify-phone", payload: { code: smsCode(c, "254712345670") }, headers: h });
+    assert.equal(phoneOk.statusCode, 200);
+    assert.equal((await c.api.inject({ method: "GET", url: "/app/keys", headers: h })).json().error.code, "email_unverified");
     const wrong = await c.api.inject({ method: "POST", url: "/app/auth/verify-email", payload: { code: "000000" }, headers: h });
     assert.equal(wrong.json().error.code, "wrong_code");
-    const code = c.mails.at(-1)!.text.match(/\b(\d{6})\b/)![1];
-    const ok = await c.api.inject({ method: "POST", url: "/app/auth/verify-email", payload: { code }, headers: h });
+    const ok = await c.api.inject({ method: "POST", url: "/app/auth/verify-email", payload: { code: mailCode(c, email) }, headers: h });
     assert.equal(ok.statusCode, 200);
     const keys = (await c.api.inject({ method: "GET", url: "/app/keys", headers: h })).json();
     assert.equal(keys.length, 1);
@@ -58,7 +70,78 @@ describe("accounts", () => {
     const again = await c.api.inject({ method: "POST", url: "/app/auth/reset", payload: { token: link, password: "another-new-password" } });
     assert.equal(again.json().error.code, "invalid_reset_link");
     const login = await c.api.inject({ method: "POST", url: "/app/auth/login", payload: { email: m.email, password: "a-brand-new-password" } });
-    assert.equal(login.statusCode, 200);
+    assert.equal(login.json().otp_required, true);
+  });
+
+  it("signs in with a password and then the SMS code", async () => {
+    const m = await merchant(c);
+    const login = await c.api.inject({ method: "POST", url: "/app/auth/login", payload: { email: m.email, password: "correct-horse-battery" } });
+    assert.equal(login.json().otp_required, true);
+    assert.match(login.json().phone_hint, /^2547\d{2}•••\d{3}$/);
+    const pending = String(login.headers["set-cookie"]).split(";")[0];
+    const h = { cookie: pending, "x-requested-with": "SwiftPal" };
+    assert.equal((await c.api.inject({ method: "GET", url: "/app/me", headers: h })).statusCode, 401, "a password alone opens nothing");
+    const wrong = await c.api.inject({ method: "POST", url: "/app/auth/login/verify", payload: { code: "000000" }, headers: h });
+    assert.equal(wrong.json().error.code, "wrong_code");
+    const ok = await c.api.inject({ method: "POST", url: "/app/auth/login/verify", payload: { code: smsCode(c, m.phone) }, headers: h });
+    assert.equal(ok.statusCode, 200);
+    const full = String(ok.headers["set-cookie"]).split(";")[0];
+    assert.notEqual(full, pending);
+    assert.equal((await c.api.inject({ method: "GET", url: "/app/me", headers: { cookie: full } })).statusCode, 200);
+    assert.equal((await c.api.inject({ method: "POST", url: "/app/auth/login/verify", payload: { code: "123456" }, headers: h })).json().error.code, "login_expired");
+  });
+
+  it("changes the phone only with codes to the old and the new number", async () => {
+    const m = await merchant(c);
+    await m.dash("PATCH", "/app/me", { phone: "0799999999" });
+    const me = (await m.dash("GET", "/app/me")).json() as { user: { phone: string } };
+    assert.equal(me.user.phone, m.phone, "PATCH /me can't move the number");
+    const start = await m.dash("POST", "/app/me/phone", { phone: "0798765432" });
+    assert.equal(start.statusCode, 200);
+    const oldCode = smsCode(c, m.phone);
+    const newCode = smsCode(c, "254798765432");
+    const swapped = await m.dash("POST", "/app/me/phone/confirm", { phone: "0798765432", current_code: newCode, new_code: oldCode });
+    assert.equal(swapped.json().error.code, "wrong_code");
+    const ok = await m.dash("POST", "/app/me/phone/confirm", { phone: "0798765432", current_code: oldCode, new_code: newCode });
+    assert.equal(ok.statusCode, 200);
+    assert.equal(((await m.dash("GET", "/app/me")).json() as { user: { phone: string } }).user.phone, "254798765432");
+    assert.match(c.mails.filter((x) => x.to === m.email).at(-1)!.subject, /phone number changed/);
+  });
+
+  it("counts wrong codes even though the request fails", async () => {
+    const m = await merchant(c);
+    const restore = await liveReady(m);
+    await m.dash("POST", "/app/confirmations", { action: "withdraw", mode: "live", amount: 500 });
+    for (let i = 0; i < 5; i++) assert.equal((await m.dash("POST", "/app/wallet/withdraw", { mode: "live", amount: 500, code: "000000" })).json().error.code, "wrong_code");
+    const right = await m.dash("POST", "/app/wallet/withdraw", { mode: "live", amount: 500, code: smsCode(c, m.phone) });
+    assert.equal(right.json().error.code, "too_many_attempts");
+    restore();
+  });
+
+  it("asks for an SMS code before live withdrawals and payouts leave the dashboard", async () => {
+    const m = await merchant(c);
+    const off = await m.dash("POST", "/app/confirmations", { action: "withdraw", mode: "live", amount: 500 });
+    assert.equal(off.json().error.code, "live_not_configured", "no code is sent when the money can't move");
+    const sent = c.sms.length;
+    const restore = await liveReady(m);
+    assert.equal(c.sms.length, sent);
+    const none = await m.dash("POST", "/app/wallet/withdraw", { mode: "live", amount: 500 });
+    assert.equal(none.json().error.code, "code_required");
+    assert.equal((await m.dash("POST", "/app/confirmations", { action: "withdraw", mode: "test", amount: 500 })).json().required, false);
+    const unverified = await m.dash("POST", "/app/confirmations", { action: "payout", mode: "live", phone: "0711111111", amount: 900, reference: "R1", reason: "refund" });
+    assert.equal(unverified.json().error.code, "payouts_not_enabled");
+    await c.app.db.query(`update merchants set verification_status = 'approved' where id = $1`, [m.merchantId]);
+    const conf = await m.dash("POST", "/app/confirmations", { action: "payout", mode: "live", phone: "0711111111", amount: 900, reference: "R1", reason: "refund" });
+    assert.equal(conf.json().required, true);
+    const code = smsCode(c, m.phone);
+    assert.match(c.sms.at(-1)!.text, /KES 900 to 254711111111/);
+    // The code is bound to that recipient and amount.
+    const other = await m.dash("POST", "/app/payouts", { mode: "live", phone: "0722222222", amount: 900, reference: "R1", reason: "refund", code });
+    assert.equal(other.json().error.code, "code_mismatch");
+    // Test mode needs no code.
+    const test = await m.dash("POST", "/app/payouts", { mode: "test", phone: "0722222222", amount: 900, reference: "R1", reason: "refund" });
+    assert.equal(test.statusCode, 201);
+    restore();
   });
 
   it("refuses state changes without the CSRF header", async () => {

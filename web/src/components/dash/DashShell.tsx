@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { Icon, type IconName } from "@/components/Icon";
 import { LogoMark } from "@/components/Logo";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
-import { api, clearCache, invalidate, setMode, useAccount, useApi, useMe, useMode, usePayments, usePayouts, type Me } from "@/lib/api";
+import { api, clearCache, invalidate, nextStep, setMode, useAccount, useApi, useMe, useMode, usePayments, usePayouts, type Me } from "@/lib/api";
 import { money, timeAgo } from "@/lib/format";
 import { ActionsProvider, useActions, type Action } from "./actions";
 import { CommandPalette } from "./CommandPalette";
@@ -21,10 +21,10 @@ export function DashShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (error?.status === 401) router.replace("/login");
-    else if (me && !me.user.email_verified_at) router.replace("/verify-email");
+    else if (me && (!me.user.phone_verified_at || !me.user.email_verified_at)) router.replace(nextStep(me));
   }, [error, me, router]);
 
-  if (!me || !me.user.email_verified_at) {
+  if (!me || !me.user.phone_verified_at || !me.user.email_verified_at) {
     return (
       <div className="dash-loading">
         <LogoMark size={34} />
@@ -67,7 +67,7 @@ function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className={`dash ${test ? "is-test" : ""}`}>
-      <MotionBackground />
+      <div className="app-bg" aria-hidden />
       <Sidebar open={navOpen} />
       {navOpen && <div className="side-scrim" onClick={() => setNavOpen(false)} />}
       <div className="dash-main">
@@ -82,19 +82,6 @@ function Shell({ children }: { children: ReactNode }) {
         </main>
       </div>
       <CommandPalette open={cmdk} onClose={() => setCmdk(false)} />
-    </div>
-  );
-}
-
-/** Slow aurora, a fading grid and grain, fixed behind everything. */
-function MotionBackground() {
-  return (
-    <div className="dash-bg" aria-hidden>
-      <div className="aur a1" />
-      <div className="aur a2" />
-      <div className="aur a3" />
-      <div className="dash-grid" />
-      <div className="dash-grain" />
     </div>
   );
 }

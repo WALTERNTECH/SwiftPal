@@ -48,3 +48,6 @@ export function delta(cur: number | null, prev: number | null): number | null {
   if (cur === null || prev === null || prev === 0) return null;
   return (cur - prev) / prev;
 }
+
+/** 254712345678 (or the API's "254712•••678") → "+254 712 ••• 678". */
+export const phoneHint = (p: string) => `+254 ${p.slice(3, 6)} ••• ${p.slice(-3)}`;

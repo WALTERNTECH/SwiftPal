@@ -1,25 +1,46 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AuthShell, NextSteps } from "@/components/auth/AuthShell";
+import { AuthShell } from "@/components/auth/AuthShell";
 import { PasswordInput } from "@/components/auth/PasswordInput";
+import { Icon } from "@/components/Icon";
 import { api, clearCache, type ApiError } from "@/lib/api";
 
 export default function ResetPassword() {
-  const router = useRouter();
-  const [token, setToken] = useState("");
+  const [token, setToken] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     setToken(new URLSearchParams(window.location.search).get("token") ?? "");
   }, []);
 
+  if (done) {
+    return (
+      <AuthShell>
+        <div className="auth-form">
+          <div className="auth-done">
+            <span className="ring">
+              <Icon name="check" size={22} strokeWidth={2.4} />
+            </span>
+            <div className="auth-head">
+              <h1>Password updated</h1>
+              <p>Sign in with your new password.</p>
+            </div>
+          </div>
+          <Link href="/login" className="btn btn-pine btn-lg btn-block">
+            Sign in
+          </Link>
+        </div>
+      </AuthShell>
+    );
+  }
+
   return (
-    <AuthShell side={<NextSteps />}>
+    <AuthShell>
       <form
         className="auth-form"
         onSubmit={async (e) => {
@@ -30,18 +51,17 @@ export default function ResetPassword() {
           try {
             await api("/app/auth/reset", { body: { token, password } });
             clearCache();
-            router.push("/dashboard");
+            setDone(true);
           } catch (err) {
             setError((err as ApiError).message);
             setBusy(false);
           }
         }}
       >
-        <div>
+        <div className="auth-head">
           <h1>Choose a new password</h1>
-          <p className="sub">Other devices signed in to this account will be signed out.</p>
         </div>
-        {!token ? (
+        {token === "" ? (
           <div className="form-error">
             This link is incomplete. <Link className="link" href="/forgot-password">Ask for a new one</Link>.
           </div>
@@ -50,11 +70,10 @@ export default function ResetPassword() {
             <div className="field">
               <label className="label" htmlFor="password">New password</label>
               <PasswordInput id="password" autoComplete="new-password" value={password} onChange={setPassword} meter />
-              <span className="hint">At least 10 characters.</span>
             </div>
             {error && <div className="form-error">{error}</div>}
-            <button className="btn btn-ink btn-lg btn-block" disabled={busy}>
-              {busy ? <span className="spinner" /> : "Set password and sign in"}
+            <button className="btn btn-pine btn-lg btn-block" disabled={busy || token === null}>
+              {busy ? <span className="spinner" /> : "Update password"}
             </button>
           </>
         )}

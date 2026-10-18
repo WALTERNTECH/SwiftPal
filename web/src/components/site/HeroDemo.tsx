@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useInView } from "@/components/motion";
+import { SITE } from "@/lib/site";
 
 type Flow = "collect" | "payout";
 type Line = { dir: "out" | "in" | "evt" | "hook"; text: string; meta: string };
@@ -12,13 +13,13 @@ const LINES: Record<Flow, Line[]> = {
     { dir: "out", text: "POST /v1/stk-push", meta: '{ "amount": 1250 }' },
     { dir: "in", text: "201 pending", meta: "pay_01JC8Q2V · 184 ms" },
     { dir: "evt", text: "payment.succeeded", meta: "TJG4K2XQ8P" },
-    { dir: "hook", text: "POST zuri.co.ke/webhooks", meta: "200 · signed · 39 ms" },
+    { dir: "hook", text: "POST yourapp.com/webhooks", meta: "200 · signed · 39 ms" },
   ],
   payout: [
     { dir: "out", text: "POST /v1/payouts", meta: '{ "amount": 3500 }' },
     { dir: "in", text: "201 processing", meta: "po_01JC9B7K · 162 ms" },
     { dir: "evt", text: "payout.succeeded", meta: "TJK7H2L9QA" },
-    { dir: "hook", text: "POST zuri.co.ke/webhooks", meta: "200 · signed · 41 ms" },
+    { dir: "hook", text: "POST yourapp.com/webhooks", meta: "200 · signed · 41 ms" },
   ],
 };
 
@@ -229,7 +230,7 @@ export function HeroDemo() {
         <div className="hd-term" aria-live="polite">
           <div className="hd-term-head">
             <span className="code-dots" aria-hidden><i /><i /><i /></span>
-            <span>api.swiftpal.co.ke</span>
+            <span>{SITE.apiHost}</span>
             <span className={`hd-live ${lines > 0 && lines < 4 ? "on" : ""}`}>live</span>
           </div>
           <div className="hd-term-body">

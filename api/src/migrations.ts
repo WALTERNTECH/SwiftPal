@@ -301,4 +301,31 @@ create table password_resets (
 create index password_resets_user on password_resets(user_id);
 `,
   },
+  {
+    id: "003_sms_codes",
+    sql: `
+alter table users add column phone_verified_at timestamptz;
+-- A password alone opens a pending session; the SMS code completes it.
+alter table sessions add column otp_pending boolean not null default false;
+
+-- One-time SMS codes. payload_hash binds a code to one exact action
+-- (an amount and recipient), so it can't be replayed for another.
+create table otp_codes (
+  id bigint generated always as identity primary key,
+  user_id text not null references users(id),
+  purpose text not null,
+  target text not null,
+  payload_hash text,
+  code_hash text not null,
+  attempts int not null default 0,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index otp_codes_user on otp_codes(user_id, purpose, created_at desc);
+
+-- Accounts verified before SMS codes existed keep working.
+update users set phone_verified_at = email_verified_at where email_verified_at is not null;
+`,
+  },
 ];

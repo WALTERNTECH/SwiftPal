@@ -27,8 +27,8 @@ const COLS = [
   {
     title: "Company",
     links: [
-      { href: `mailto:${SITE.supportEmail}`, label: "Support" },
-      { href: `mailto:${SITE.salesEmail}`, label: "Sales" },
+      ...(SITE.supportEmail ? [{ href: `mailto:${SITE.supportEmail}`, label: "Support" }] : []),
+      ...(SITE.salesEmail ? [{ href: `mailto:${SITE.salesEmail}`, label: "Sales" }] : []),
       { href: "/login", label: "Sign in" },
     ],
   },

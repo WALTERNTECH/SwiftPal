@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
-import { PageHeader, useToast } from "@/components/dash/ui";
+import { Modal, PageHeader, useToast } from "@/components/dash/ui";
 import { api, invalidate, useAccount, type ApiError, type Merchant } from "@/lib/api";
-import { normalisePhone } from "@/lib/format";
+import { normalisePhone, phoneHint } from "@/lib/format";
 
 const TABS = [
   { v: "profile", t: "Profile" },
@@ -48,32 +48,39 @@ export default function Settings() {
 function Profile() {
   const me = useAccount();
   const toast = useToast();
-  const [f, setF] = useState({ firstName: me.user.first_name, lastName: me.user.last_name, phone: me.user.phone });
+  const [f, setF] = useState({ firstName: me.user.first_name, lastName: me.user.last_name });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [changing, setChanging] = useState(false);
   return (
     <section className="panel">
       <div className="panel-head"><h3>Profile</h3></div>
       <div className="panel-body form-grid">
         <div className="field"><label className="label" htmlFor="fn">First name</label><input id="fn" className="input" value={f.firstName} onChange={(e) => setF({ ...f, firstName: e.target.value })} /></div>
         <div className="field"><label className="label" htmlFor="ln">Last name</label><input id="ln" className="input" value={f.lastName} onChange={(e) => setF({ ...f, lastName: e.target.value })} /></div>
-        <div className="field"><label className="label" htmlFor="em">Email</label><input id="em" className="input" value={me.user.email} disabled /><span className="hint">Contact support to change your sign-in email.</span></div>
-        <div className="field"><label className="label" htmlFor="ph">M-Pesa phone</label><input id="ph" className="input mono" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /><span className="hint">Used for top-ups, verification prompts and withdrawals.</span></div>
+        <div className="field"><label className="label" htmlFor="em">Business email</label><input id="em" className="input" value={me.user.email} disabled /></div>
+        <div className="field">
+          <label className="label" htmlFor="ph">Phone number</label>
+          <div className="input-group">
+            <input id="ph" className="input mono" style={{ borderRadius: "var(--r) 0 0 var(--r)" }} value={phoneHint(me.user.phone)} disabled />
+            <button className="btn btn-line" style={{ height: 40, borderRadius: "0 var(--r) var(--r) 0", borderLeft: 0 }} onClick={() => setChanging(true)}>
+              Change
+            </button>
+          </div>
+        </div>
         {error && <div className="form-error full">{error}</div>}
       </div>
       <div className="modal-foot">
         <Link href="/forgot-password" className="btn btn-ghost" style={{ marginRight: "auto" }}>Change password</Link>
         <button
-          className="btn btn-ink"
+          className="btn btn-pine"
           disabled={busy}
           onClick={async () => {
-            const p = normalisePhone(f.phone);
-            if (!p) return setError("Enter a Safaricom number.");
             if (!f.firstName.trim() || !f.lastName.trim()) return setError("Enter your first and last name.");
             setError("");
             setBusy(true);
             try {
-              await api("/app/me", { method: "PATCH", body: { first_name: f.firstName.trim(), last_name: f.lastName.trim(), phone: p } });
+              await api("/app/me", { method: "PATCH", body: { first_name: f.firstName.trim(), last_name: f.lastName.trim() } });
               invalidate("/app/me");
               toast("Profile saved");
             } catch (err) {
@@ -85,7 +92,108 @@ function Profile() {
           {busy ? <span className="spinner" /> : "Save changes"}
         </button>
       </div>
+      <PhoneChange open={changing} onClose={() => setChanging(false)} />
     </section>
+  );
+}
+
+/** A code to the current number authorises the move; a code to the new one proves it. */
+function PhoneChange({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const me = useAccount();
+  const toast = useToast();
+  const [phone, setPhone] = useState("");
+  const [sent, setSent] = useState<string | null>(null);
+  const [codes, setCodes] = useState({ current: "", next: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setPhone("");
+      setSent(null);
+      setCodes({ current: "", next: "" });
+      setError("");
+      setBusy(false);
+    }
+  }, [open]);
+
+  async function run(fn: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+    } catch (err) {
+      setError((err as ApiError).message);
+    }
+    setBusy(false);
+  }
+
+  const digits = (v: string) => v.replace(/\D/g, "").slice(0, 6);
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Change phone number"
+      footer={
+        <>
+          <button className="btn btn-line" onClick={onClose}>Cancel</button>
+          {!sent ? (
+            <button
+              className="btn btn-pine"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  const p = normalisePhone(phone);
+                  if (!p) throw new Error("Enter a valid Safaricom number.");
+                  await api("/app/me/phone", { body: { phone: p } });
+                  setSent(p);
+                })
+              }
+            >
+              {busy ? <span className="spinner" /> : "Send codes"}
+            </button>
+          ) : (
+            <button
+              className="btn btn-pine"
+              disabled={busy || codes.current.length !== 6 || codes.next.length !== 6}
+              onClick={() =>
+                run(async () => {
+                  await api("/app/me/phone/confirm", { body: { phone: sent, current_code: codes.current, new_code: codes.next } });
+                  await invalidate("/app/me");
+                  toast("Phone number updated");
+                  onClose();
+                })
+              }
+            >
+              {busy ? <span className="spinner" /> : "Confirm"}
+            </button>
+          )}
+        </>
+      }
+    >
+      {!sent ? (
+        <div className="field">
+          <label className="label" htmlFor="new-ph">New phone number</label>
+          <div className="input-group">
+            <span className="prefix">+254</span>
+            <input id="new-ph" className="input mono" type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="field">
+            <label className="label" htmlFor="code-cur">Code sent to {phoneHint(me.user.phone)}</label>
+            <input id="code-cur" className="input mono" inputMode="numeric" autoComplete="one-time-code" value={codes.current} onChange={(e) => setCodes({ ...codes, current: digits(e.target.value) })} />
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="code-new">Code sent to {phoneHint(sent)}</label>
+            <input id="code-new" className="input mono" inputMode="numeric" value={codes.next} onChange={(e) => setCodes({ ...codes, next: digits(e.target.value) })} />
+          </div>
+        </>
+      )}
+      {error && <div className="form-error">{error}</div>}
+    </Modal>
   );
 }
 
@@ -116,7 +224,7 @@ function BusinessTab() {
       </div>
       <div className="modal-foot">
         <button
-          className="btn btn-ink"
+          className="btn btn-pine"
           disabled={busy}
           onClick={async () => {
             if (b.name.trim().length < 2) return setError("Enter the business name.");

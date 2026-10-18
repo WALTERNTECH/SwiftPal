@@ -18,6 +18,8 @@ export type Config = {
   adminToken: string | null;
   resendApiKey: string | null;
   mailFrom: string;
+  /** Africa's Talking SMS for sign-up, sign-in and money-movement codes. Null logs messages instead. */
+  sms: { username: string; apiKey: string; senderId: string | null } | null;
   allowPrivateWebhooks: boolean;
   storage: { driver: "db" } | { driver: "supabase"; url: string; serviceKey: string; bucket: string };
   daraja: {
@@ -61,7 +63,8 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
     callbackToken: e.CALLBACK_TOKEN ?? (env === "production" ? "" : "dev-callback-token"),
     adminToken: e.ADMIN_TOKEN ?? null,
     resendApiKey: e.RESEND_API_KEY ?? null,
-    mailFrom: e.MAIL_FROM ?? "SwiftPal <no-reply@swiftpal.co.ke>",
+    mailFrom: e.MAIL_FROM ?? "SwiftPal <onboarding@resend.dev>",
+    sms: e.AT_USERNAME && e.AT_API_KEY ? { username: e.AT_USERNAME, apiKey: e.AT_API_KEY, senderId: e.AT_SENDER_ID || null } : null,
     allowPrivateWebhooks: e.ALLOW_PRIVATE_WEBHOOKS === "true" && env !== "production",
     storage:
       e.SUPABASE_URL && e.SUPABASE_SERVICE_ROLE_KEY

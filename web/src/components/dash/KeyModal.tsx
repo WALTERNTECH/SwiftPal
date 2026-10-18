@@ -35,7 +35,7 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
 
   if (fresh) {
     return (
-      <Modal open={open} onClose={onClose} title="Copy your new key" footer={<button className="btn btn-ink" onClick={onClose}>Done</button>}>
+      <Modal open={open} onClose={onClose} title="Copy your new key" footer={<button className="btn btn-pine" onClick={onClose}>Done</button>}>
         <div className="callout warn">
           <Icon name="alert" size={16} />
           <span>{mode === "live" ? "Shown once. Store it in your secrets manager." : "Store it in your secrets manager. Test keys stay visible under API keys."}</span>
