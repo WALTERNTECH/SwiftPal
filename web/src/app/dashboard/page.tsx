@@ -5,8 +5,7 @@ import { useMemo, useState } from "react";
 import { Icon, type IconName } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { AreaChart, CountUp, Delta, kes, Sparkline, SuccessRing } from "@/components/dash/charts";
-import { useToast } from "@/components/dash/ui";
-import { api, invalidate, useAccount, useApi, useMode, usePayments, usePayouts, type Analytics, type Endpoint, type Summary } from "@/lib/api";
+import { useAccount, useApi, useMode, usePayments, usePayouts, type Analytics, type ApiKey, type Endpoint, type Summary } from "@/lib/api";
 import { dayLabel, delta, maskPhone, money, timeAgo } from "@/lib/format";
 
 type Range = 7 | 14 | 30;
@@ -16,27 +15,29 @@ const ZERO: Summary = { collected: 0, paid_out: 0, successful: 0, prompts: 0, se
 export default function Overview() {
   const me = useAccount();
   const mode = useMode();
-  const toast = useToast();
   const { open, showPayment } = useActions();
   const [range, setRange] = useState<Range>(14);
-  const [seeding, setSeeding] = useState(false);
   const { data: week } = useApi<Analytics>(`/app/analytics?mode=${mode}&days=7`);
   const { data: span } = useApi<Analytics>(`/app/analytics?mode=${mode}&days=${range}`);
   const { data: payments = [], loading } = usePayments(mode);
   const { data: payouts = [] } = usePayouts(mode);
   const { data: hooks = [] } = useApi<Endpoint[]>(`/app/webhooks?mode=${mode}`);
+  const { data: keys = [] } = useApi<ApiKey[]>("/app/keys");
   const bal = me.balances[mode];
   const cur = week?.current ?? ZERO;
   const prev = week?.previous ?? ZERO;
   const spark = (k: "collected" | "paid_out" | "successful") => (week?.series ?? []).map((d) => d[k]);
 
-  const verified = me.channels.some((c) => c.status === "verified");
-  const setup = [
-    { done: !!me.merchant.industry, t: "Business details", href: "/dashboard/settings" },
-    { done: verified, t: "Verify a Till or Paybill", href: "/dashboard/channels" },
-    { done: me.balances.live.fee_credit.available > 0, t: "Fund fee credit", href: "/dashboard/wallet" },
-    { done: hooks.length > 0, t: "Add a webhook", href: "/dashboard/developers/webhooks" },
-    { done: me.merchant.verification_status === "approved", t: "Account verification", href: "/dashboard/verification" },
+  const vs = me.merchant.verification_status;
+  const approved = vs === "approved";
+  const hasChannel = me.channels.length > 0;
+  // In order: each step opens once the one before it is done.
+  const setup: { t: string; sub?: string; done: boolean; locked?: boolean; href?: string; act?: () => void }[] = [
+    { t: "Business details", done: !!me.merchant.industry, href: "/dashboard/settings?tab=business" },
+    { t: "Verify your identity", sub: vs === "submitted" ? "In review" : vs === "rejected" ? "Needs changes" : undefined, done: approved, href: "/dashboard/verification" },
+    { t: "Add your Till or Paybill", done: hasChannel, locked: !approved, act: () => open("channel") },
+    { t: "Create an API key", done: keys.some((k) => k.mode === "live"), locked: !approved, href: "/dashboard/developers" },
+    { t: "Add a webhook", done: hooks.length > 0, locked: !approved, href: "/dashboard/developers/webhooks" },
   ];
   const doneCount = setup.filter((x) => x.done).length;
 
@@ -80,18 +81,6 @@ export default function Overview() {
     { label: "Fees", icon: "receipt" as IconName, val: cur.fees, fmt: (n: number) => `KES ${n.toFixed(2)}`, d: delta(cur.fees, prev.fees), spark: spark("successful"), invert: true },
   ];
 
-  async function seed() {
-    setSeeding(true);
-    try {
-      await api("/app/sandbox/seed", { method: "POST" });
-      invalidate("/app/");
-      toast("Sample history loaded");
-    } catch (err) {
-      toast((err as Error).message, "alert");
-    }
-    setSeeding(false);
-  }
-
   return (
     <>
       <div className="page-header rise">
@@ -99,14 +88,14 @@ export default function Overview() {
           <h1>
             {greeting}, {me.user.first_name}
           </h1>
-          <p className="muted">{mode === "test" ? "Sandbox" : "Live"} · last 7 days compared with the 7 before</p>
+          <p className="muted">Last 7 days compared with the 7 before</p>
         </div>
         <div className="row wrap">
-          <button className="btn btn-line" onClick={() => open("payout")}>
+          <button className="btn btn-line" onClick={() => open("payout")} disabled={!approved}>
             <Icon name="payout" size={15} /> Send payout
           </button>
-          <button className="btn btn-pine" onClick={() => open("payment")}>
-            <Icon name="collect" size={15} /> {mode === "test" ? "Test STK Push" : "Request payment"}
+          <button className="btn btn-pine" onClick={() => open("payment")} disabled={!hasChannel}>
+            <Icon name="collect" size={15} /> Request payment
           </button>
         </div>
       </div>
@@ -114,9 +103,9 @@ export default function Overview() {
       <div className="grid-2">
         <section className="bal-hero rise" style={{ ["--d" as string]: "40ms" }}>
           <div className="bal-top">
-            <span className="eyebrow">Balances · {mode}</span>
-            <span className="bal-chip">
-              <i /> {verified ? "Live STK Push on" : "Sandbox ready"}
+            <span className="eyebrow">Balances</span>
+            <span className={`bal-chip ${hasChannel ? "" : "off"}`}>
+              <i /> {hasChannel ? "Receiving payments" : "Not receiving yet"}
             </span>
           </div>
           <div className="bal-grid">
@@ -164,20 +153,20 @@ export default function Overview() {
             </div>
           </div>
           <div className="setup-list">
-            {setup.map((x) =>
-              x.done ? (
-                <div key={x.t} className="setup-item done">
-                  <span className="setup-mark"><Icon name="check" size={11} strokeWidth={2.6} /></span>
+            {setup.map((x) => {
+              const body = (
+                <>
+                  <span className="setup-mark">{x.done && <Icon name="check" size={11} strokeWidth={2.6} />}</span>
                   <span className="grow">{x.t}</span>
-                </div>
-              ) : (
-                <Link key={x.t} href={x.href} className="setup-item">
-                  <span className="setup-mark" />
-                  <span className="grow">{x.t}</span>
-                  <Icon name="chevronRight" size={14} className="dim" />
-                </Link>
-              ),
-            )}
+                  {x.sub && !x.done && <span className="setup-sub">{x.sub}</span>}
+                  {!x.done && !x.locked && <Icon name="chevronRight" size={14} className="dim" />}
+                </>
+              );
+              if (x.done) return <div key={x.t} className="setup-item done">{body}</div>;
+              if (x.locked) return <div key={x.t} className="setup-item locked">{body}</div>;
+              if (x.act) return <button key={x.t} className="setup-item" onClick={x.act}>{body}</button>;
+              return <Link key={x.t} href={x.href!} className="setup-item">{body}</Link>;
+            })}
           </div>
         </section>
       </div>
@@ -238,12 +227,7 @@ export default function Overview() {
           ) : (
             <div className="empty">
               <b>No activity yet</b>
-              <p className="muted">{mode === "live" ? "Live payments appear here." : "Send a test STK Push, or load sixty days of sample history."}</p>
-              {mode === "test" && (
-                <button className="btn btn-line btn-sm" onClick={seed} disabled={seeding}>
-                  {seeding ? <span className="spinner" /> : "Load sample history"}
-                </button>
-              )}
+              <p className="muted">Payments into your Till or Paybill appear here.</p>
             </div>
           )}
         </section>

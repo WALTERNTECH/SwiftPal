@@ -19,7 +19,6 @@ const COLS = [
     links: [
       { href: "/docs", label: "Documentation" },
       { href: "/docs/quickstart", label: "Quickstart" },
-      { href: "/docs/sandbox", label: "Sandbox" },
       { href: "/docs/errors", label: "Error codes" },
       { href: "/docs/faq", label: "FAQ" },
     ],

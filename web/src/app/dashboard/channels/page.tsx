@@ -1,16 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { Icon } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { Empty, PageHeader, useToast } from "@/components/dash/ui";
 import { api, invalidate, useAccount, type ApiError } from "@/lib/api";
 import { dateTime } from "@/lib/format";
-import { STARTER_CREDIT } from "@/lib/pricing";
 
 export default function Channels() {
   const me = useAccount();
   const toast = useToast();
-  const { open, verifyChannel } = useActions();
+  const { open } = useActions();
+  const vs = me.merchant.verification_status;
+  const approved = vs === "approved";
 
   async function act(path: string, method: string, done: string) {
     try {
@@ -28,11 +30,23 @@ export default function Channels() {
         title="Channels"
         sub="Tills and Paybills your STK Push requests route to"
         actions={
-          <button className="btn btn-pine" onClick={() => open("channel")}>
-            <Icon name="plus" size={15} /> Add channel
+          <button className="btn btn-pine" onClick={() => open("channel")} disabled={!approved}>
+            <Icon name="plus" size={15} /> Add Till or Paybill
           </button>
         }
       />
+
+      {!approved && (
+        <div className="callout rise">
+          <Icon name="idcard" size={16} />
+          <span className="grow">{vs === "submitted" ? "Available once your verification is approved." : "Verify your account to add a Till or Paybill."}</span>
+          {vs !== "submitted" && (
+            <Link href="/dashboard/verification" className="btn btn-pine btn-sm">
+              Verify
+            </Link>
+          )}
+        </div>
+      )}
 
       {me.channels.length ? (
         <div className="tile-grid">
@@ -40,7 +54,7 @@ export default function Channels() {
             <div key={c.id} className="panel channel-card rise" style={{ ["--d" as string]: `${i * 60}ms` }}>
               <div className="spread">
                 <span className={`tag ${c.kind === "till" ? "post" : "get"}`}>{c.kind === "till" ? "TILL · BUY GOODS" : "PAYBILL"}</span>
-                {c.status === "verified" ? <span className="badge ok">Verified</span> : <span className="badge warn">Unverified</span>}
+                <span className="badge ok">Active</span>
               </div>
               <div>
                 <div className="channel-code">{c.shortcode}</div>
@@ -52,14 +66,9 @@ export default function Channels() {
                 )}
                 <div><dt>Channel ID</dt><dd className="mono">{c.id}</dd></div>
                 <div><dt>Default</dt><dd>{c.is_default ? "Yes" : "No"}</dd></div>
-                <div><dt>{c.verified_at ? "Verified" : "Added"}</dt><dd>{dateTime(c.verified_at ?? c.created_at)}</dd></div>
+                <div><dt>Added</dt><dd>{dateTime(c.created_at)}</dd></div>
               </dl>
               <div className="row wrap">
-                {c.status !== "verified" && (
-                  <button className="btn btn-pine btn-sm" onClick={() => verifyChannel(c)}>
-                    Verify with KES 1
-                  </button>
-                )}
                 {!c.is_default && (
                   <button className="btn btn-line btn-sm" onClick={() => act(`/app/channels/${c.id}/default`, "POST", "Default channel updated")}>
                     Make default
@@ -81,9 +90,9 @@ export default function Channels() {
         <section className="panel rise">
           <Empty
             icon="channel"
-            title="No channels yet"
-            body={`Add a Till or Paybill. It's confirmed with a KES 1 prompt and the first one adds KES ${STARTER_CREDIT} credit.`}
-            action={<button className="btn btn-pine" onClick={() => open("channel")}>Add channel</button>}
+            title="No Till or Paybill yet"
+            body="Payments you request go straight into it."
+            action={approved ? <button className="btn btn-pine" onClick={() => open("channel")}>Add Till or Paybill</button> : undefined}
           />
         </section>
       )}

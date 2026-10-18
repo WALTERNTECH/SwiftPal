@@ -1,10 +1,7 @@
 import type { App } from "../app.js";
 import { one } from "../db.js";
 import { ApiError, open, seal } from "../lib.js";
-import { STARTER_CREDIT_CENTS } from "../pricing.js";
-import { getMerchant, insertKey, type Merchant, type User } from "./accounts.js";
-import { createStk } from "./payments.js";
-import { credit } from "./wallet.js";
+import type { Merchant } from "./accounts.js";
 
 export type Channel = {
   id: string;
@@ -47,6 +44,8 @@ export async function addChannel(
   merchant: Merchant,
   input: { kind: "till" | "paybill"; shortcode: string; accountNumber?: string; displayName: string; businessShortcode?: string; passkey?: string },
 ) {
+  if (merchant.verification_status !== "approved")
+    throw new ApiError(403, "verification_required", "Tills and Paybills open once your account is verified.", "permission_error");
   if (!/^\d{5,7}$/.test(input.shortcode)) throw new ApiError(400, "invalid_shortcode", "A till or paybill number is 5 to 7 digits.");
   const account = input.accountNumber?.trim();
   if (input.kind === "paybill" && !account) throw new ApiError(400, "account_number_required", "Enter the account number for this paybill.");
@@ -62,8 +61,9 @@ export async function addChannel(
     const id = `${input.kind}_${input.shortcode}`;
     await q.query(`update channels set id = id || '_' || extract(epoch from removed_at)::bigint where id = $1 and removed_at is not null`, [id]);
     await q.query(
-      `insert into channels (id, merchant_id, kind, shortcode, account_number, display_name, is_default, credential_mode, business_shortcode, passkey_enc)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      // The account behind it is already verified, so the channel is live straight away.
+      `insert into channels (id, merchant_id, kind, shortcode, account_number, display_name, is_default, credential_mode, business_shortcode, passkey_enc, status, verified_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'verified',now())`,
       [
         id,
         merchant.id,
@@ -78,45 +78,6 @@ export async function addChannel(
       ],
     );
     return (await one<Channel>(q, `select * from channels where id = $1`, [id]))!;
-  });
-}
-
-/** Sends KES 1 from the owner's phone into the channel. Free: STK under KES 10 costs nothing. */
-export async function startVerification(app: App, merchant: Merchant, user: User, channelId: string) {
-  const ch = await one<Channel>(app.db, `select * from channels where id = $1 and merchant_id = $2 and removed_at is null`, [channelId, merchant.id]);
-  if (!ch) throw new ApiError(404, "not_found", "No such channel.", "not_found");
-  if (ch.status === "verified") return { channel: ch, payment: null };
-  // Without live Daraja credentials the prompt is simulated, so the flow still works end to end.
-  const mode = app.mpesa.live ? "live" : "test";
-  const payment = await createStk(app, merchant, mode, { phone: user.phone, amount: 1, reference: "VERIFY", description: "Verify" }, { purpose: "channel_verify", channel: ch });
-  await app.db.query(`update channels set status = 'verifying', verify_payment_id = $2 where id = $1`, [ch.id, payment.id]);
-  return { channel: { ...ch, status: "verifying" as const, verify_payment_id: payment.id }, payment };
-}
-
-/**
- * The owner confirms the prompt showed their business name. Turns on live
- * mode, adds the starter credit once, and issues the first live key.
- */
-export async function confirmVerification(app: App, merchantId: string, channelId: string) {
-  return app.db.tx(async (q) => {
-    const ch = await one<Channel>(q, `select * from channels where id = $1 and merchant_id = $2 and removed_at is null for update`, [channelId, merchantId]);
-    if (!ch) throw new ApiError(404, "not_found", "No such channel.", "not_found");
-    if (ch.status === "verified") return { channel: ch, liveKey: null };
-    const p = ch.verify_payment_id ? await one<{ status: string }>(q, `select status from payments where id = $1`, [ch.verify_payment_id]) : null;
-    if (!p || p.status !== "succeeded") throw new ApiError(409, "verification_incomplete", "The KES 1 prompt hasn't been paid yet.");
-    await q.query(`update channels set status = 'verified', verified_at = now() where id = $1`, [ch.id]);
-    const m = await getMerchant(q, merchantId);
-    if (!m.starter_credit_given) {
-      await credit(q, merchantId, "live", "fee", STARTER_CREDIT_CENTS, "starter_credit", ch.id);
-      await q.query(`update merchants set starter_credit_given = true where id = $1`, [merchantId]);
-    }
-    await q.query(`update merchants set live_enabled = true where id = $1`, [merchantId]);
-    let liveKey: string | null = null;
-    if (!(await one(q, `select 1 from api_keys where merchant_id = $1 and mode = 'live' and revoked_at is null`, [merchantId]))) {
-      const scopes = m.verification_status === "approved" ? ["payments:write", "payouts:write", "read"] : ["payments:write", "read"];
-      liveKey = (await insertKey(app, q, merchantId, "live", "Default live key", scopes)).secret;
-    }
-    return { channel: (await one<Channel>(q, `select * from channels where id = $1`, [ch.id]))!, liveKey };
   });
 }
 

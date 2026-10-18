@@ -69,7 +69,7 @@ export default function Payments() {
               {exporting ? <span className="spinner" /> : <Icon name="download" size={15} />} Export
             </button>
             <button className="btn btn-pine" onClick={() => open("payment")}>
-              <Icon name="plus" size={15} /> {mode === "test" ? "Test payment" : "Request payment"}
+              <Icon name="plus" size={15} /> Request payment
             </button>
           </>
         }
@@ -148,8 +148,8 @@ export default function Payments() {
           <Empty
             icon="collect"
             title={needle || filter !== "all" ? "No payments match" : "No payments yet"}
-            body={list.error ? list.error.message : needle || filter !== "all" ? "Try another filter." : mode === "live" ? "Live payments appear here." : "Send a test STK Push."}
-            action={!needle && filter === "all" ? <button className="btn btn-pine" onClick={() => open("payment")}>{mode === "test" ? "Send a test payment" : "Request a payment"}</button> : undefined}
+            body={list.error ? list.error.message : needle || filter !== "all" ? "Try another filter." : "Payments into your Till or Paybill appear here."}
+            action={!needle && filter === "all" ? <button className="btn btn-pine" onClick={() => open("payment")}>Request a payment</button> : undefined}
           />
         )}
       </section>

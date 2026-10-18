@@ -18,7 +18,7 @@ const DARAJA = [
 ];
 
 const SWIFTPAL = [
-  ["Sign up", "sandbox key issued instantly"],
+  ["Sign up and verify", "ID and a selfie, once"],
   ["POST /v1/stk-push", "prompt on the phone in ~2s"],
   ["Receive a signed webhook", "same shape for every event"],
 ];

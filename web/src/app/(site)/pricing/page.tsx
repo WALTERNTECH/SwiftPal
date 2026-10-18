@@ -158,7 +158,7 @@ export default function Pricing() {
       <section className="f-sec cta">
         <div className="cta-glow" aria-hidden />
         <h2 className="reveal">
-          Start in the sandbox. <span className="grad">Pay when it&apos;s live.</span>
+          No setup fee. <span className="grad">Pay only when a payment succeeds.</span>
         </h2>
         <Link href="/signup" className="split-btn lg reveal" style={{ ["--d" as string]: "100ms" }}>
           <span>Start integrating</span>

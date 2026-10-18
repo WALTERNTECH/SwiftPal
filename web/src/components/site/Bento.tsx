@@ -83,12 +83,12 @@ function ApiVisual() {
   );
 }
 
-function SandboxVisual() {
+function OutcomesVisual() {
   const rows = [
-    ["254700000000", "succeeded", "ok"],
-    ["254700000001", "cancelled", "warn"],
-    ["254700000002", "no funds", "bad"],
-    ["254700000003", "expired", ""],
+    ["ORD-1041", "succeeded", "ok"],
+    ["ORD-1042", "cancelled", "warn"],
+    ["ORD-1043", "no funds", "bad"],
+    ["ORD-1044", "expired", ""],
   ];
   return (
     <div className="bv" aria-hidden>
@@ -128,7 +128,7 @@ const CELLS = [
   { t: "B2C payouts", d: "Pay one number or a thousand from your float.", v: <PayoutVisual /> },
   { t: "Webhooks", d: "An event the moment a payment settles.", v: <HookVisual /> },
   { t: "REST API", d: "JSON in, JSON out. One shape everywhere.", v: <ApiVisual />, wide: true },
-  { t: "Sandbox", d: "Force success, cancel, timeout or no funds.", v: <SandboxVisual /> },
+  { t: "Clear outcomes", d: "Every M-Pesa result code mapped to one status.", v: <OutcomesVisual /> },
   { t: "Signed events", d: "HMAC on every delivery. Verify in six lines.", v: <SignVisual />, wide: true },
 ];
 

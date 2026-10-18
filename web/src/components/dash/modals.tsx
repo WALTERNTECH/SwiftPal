@@ -6,7 +6,6 @@ import { Icon } from "@/components/Icon";
 import { api, invalidate, useAccount, useMode, usePaymentWatch, type ApiError, type Payment, type Payout } from "@/lib/api";
 import { dateTime, fee, maskPhone, money, money2, normalisePhone, phoneHint } from "@/lib/format";
 import { b2cFee, stkFee } from "@/lib/pricing";
-import { SANDBOX_NUMBERS } from "@/lib/site";
 import { SmsConfirm } from "./SmsConfirm";
 import { Drawer, KV, Modal, PayBadge, useToast } from "./ui";
 
@@ -17,8 +16,7 @@ export function NewPaymentModal({ open, onClose, onCreated }: { open: boolean; o
   const me = useAccount();
   const mode = useMode();
   const toast = useToast();
-  const test = mode === "test";
-  const [phone, setPhone] = useState(test ? "254700000000" : "");
+  const [phone, setPhone] = useState("");
   const [amount, setAmount] = useState("100");
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,12 +24,12 @@ export function NewPaymentModal({ open, onClose, onCreated }: { open: boolean; o
 
   useEffect(() => {
     if (open) {
-      setPhone(test ? "254700000000" : me.user.phone);
-      setReference(`TEST-${Math.floor(Math.random() * 9000 + 1000)}`);
+      setPhone("");
+      setReference(`INV-${Math.floor(Math.random() * 9000 + 1000)}`);
       setError("");
       setBusy(false);
     }
-  }, [open, test, me.user.phone]);
+  }, [open]);
 
   const amt = Math.floor(Number(amount) || 0);
   const f = stkFee(amt);
@@ -60,7 +58,7 @@ export function NewPaymentModal({ open, onClose, onCreated }: { open: boolean; o
     <Modal
       open={open}
       onClose={onClose}
-      title={test ? "Send a test STK Push" : "Send an STK Push"}
+      title="Request a payment"
       footer={
         <>
           <button className="btn btn-line" onClick={onClose}>Cancel</button>
@@ -70,18 +68,6 @@ export function NewPaymentModal({ open, onClose, onCreated }: { open: boolean; o
         </>
       }
     >
-      {test && (
-        <div className="field">
-          <span className="label">Sandbox outcome</span>
-          <div className="amount-chips">
-            {SANDBOX_NUMBERS.map((n) => (
-              <button key={n.phone} type="button" onClick={() => setPhone(n.phone)} aria-pressed={phone === n.phone} style={phone === n.phone ? { borderColor: "var(--ink)" } : undefined}>
-                {n.outcome}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       <div className="field">
         <label className="label" htmlFor="np-phone">Customer phone</label>
         <input id="np-phone" className="input mono" value={phone} onChange={(e) => setPhone(e.target.value)} />
@@ -140,7 +126,7 @@ export function PaymentDrawer({ id, onClose }: { id: string | null; onClose: () 
           ["Customer", <span key="ph" className="mono">{p.phone}</span>],
           ["Reference", <span key="r" className="mono">{p.reference}</span>],
           ["M-Pesa receipt", p.mpesa_receipt ? <span key="rc" className="mono">{p.mpesa_receipt}</span> : <span key="rc" className="dim">—</span>],
-          ["Channel", p.channel ? <span key="c" className="mono">{p.channel}</span> : <span key="c" className="dim">Sandbox</span>],
+          ["Channel", p.channel ? <span key="c" className="mono">{p.channel}</span> : <span key="c" className="dim">—</span>],
           ["Fee", p.fee.charged ? money2(p.fee.amount) : <span key="f" className="muted">{p.fee.amount === 0 ? "Free" : `${money2(p.fee.amount)} not charged`}</span>],
           ["Created", dateTime(p.created_at)],
         ]}
@@ -390,7 +376,7 @@ export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => v
   const [hint, setHint] = useState<string | null>(null);
   useEffect(() => {
     if (open) {
-      setPhone(mode === "test" ? "254712345678" : "");
+      setPhone("");
       setAmount("1500");
       setReference(`WD-${Math.floor(Math.random() * 90000 + 10000)}`);
       setError("");

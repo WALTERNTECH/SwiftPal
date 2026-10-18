@@ -30,6 +30,18 @@ async function liveReady(m: Awaited<ReturnType<typeof merchant>>) {
   return () => void (c.app.mpesa.live = before);
 }
 
+/** Uploads ID documents and approves them through the admin API, as the review team will. */
+async function approve(m: Awaited<ReturnType<typeof merchant>>) {
+  const f = form(
+    { kind: "individual", name: "Amina Otieno", id_number: "31234567" },
+    { id_front: { name: "f.jpg", type: "image/jpeg", bytes: JPEG }, id_back: { name: "b.jpg", type: "image/jpeg", bytes: JPEG }, selfie: { name: "s.jpg", type: "image/jpeg", bytes: JPEG } },
+  );
+  const sub = await c.api.inject({ method: "POST", url: "/app/verification", payload: f.body, headers: { "content-type": f.contentType, cookie: m.cookie, "x-requested-with": "SwiftPal" } });
+  assert.equal(sub.statusCode, 201, sub.body);
+  const res = await c.api.inject({ method: "POST", url: `/admin/verifications/${sub.json().id}/approve`, headers: { authorization: "Bearer admin-token-for-tests" } });
+  assert.equal(res.statusCode, 200, res.body);
+}
+
 describe("accounts", () => {
   it("signs up, proves the phone by SMS and the email by code, and issues a revealable test key", async () => {
     const email = "amina@example.co.ke";
@@ -49,9 +61,7 @@ describe("accounts", () => {
     assert.equal(wrong.json().error.code, "wrong_code");
     const ok = await c.api.inject({ method: "POST", url: "/app/auth/verify-email", payload: { code: mailCode(c, email) }, headers: h });
     assert.equal(ok.statusCode, 200);
-    const keys = (await c.api.inject({ method: "GET", url: "/app/keys", headers: h })).json();
-    assert.equal(keys.length, 1);
-    assert.match(keys[0].secret, /^sp_test_[A-Za-z0-9]{32}$/);
+    assert.deepEqual((await c.api.inject({ method: "GET", url: "/app/keys", headers: h })).json(), [], "no sandbox key is issued");
     const dup = await c.api.inject({ method: "POST", url: "/app/auth/signup", payload: { first_name: "A", last_name: "B", email, phone: "0712345678", password: "correct-horse-battery" } });
     assert.equal(dup.json().error.code, "email_taken");
     const login = await c.api.inject({ method: "POST", url: "/app/auth/login", payload: { email, password: "nope-nope-nope" } });
@@ -142,6 +152,26 @@ describe("accounts", () => {
     const test = await m.dash("POST", "/app/payouts", { mode: "test", phone: "0722222222", amount: 900, reference: "R1", reason: "refund" });
     assert.equal(test.statusCode, 201);
     restore();
+  });
+
+  it("with codes off, signs up and signs in without any code", async () => {
+    const off = await boot({ VERIFICATION_CODES: "off" });
+    try {
+      const res = await off.api.inject({ method: "POST", url: "/app/auth/signup", payload: { first_name: "Wanjiru", last_name: "K", email: "w@example.com", phone: "0711000111", password: "correct-horse-battery" } });
+      assert.equal(res.statusCode, 201);
+      const h = { cookie: String(res.headers["set-cookie"]).split(";")[0], "x-requested-with": "SwiftPal" };
+      const me = (await off.api.inject({ method: "GET", url: "/app/me", headers: h })).json();
+      assert.equal(me.codes, false);
+      assert.ok(me.user.phone_verified_at && me.user.email_verified_at);
+      assert.equal((await off.api.inject({ method: "GET", url: "/app/keys", headers: h })).statusCode, 200, "nothing is gated");
+      assert.equal(off.sms.length + off.mails.length, 0, "no codes sent");
+      const login = await off.api.inject({ method: "POST", url: "/app/auth/login", payload: { email: "w@example.com", password: "correct-horse-battery" } });
+      assert.equal(login.json().otp_required, false);
+      const full = String(login.headers["set-cookie"]).split(";")[0];
+      assert.equal((await off.api.inject({ method: "GET", url: "/app/me", headers: { cookie: full } })).statusCode, 200);
+    } finally {
+      await stop(off);
+    }
   });
 
   it("refuses state changes without the CSRF header", async () => {
@@ -367,25 +397,25 @@ describe("webhooks", () => {
 describe("channels", () => {
   it("requires an account number for a paybill", async () => {
     const m = await merchant(c);
+    await approve(m);
     const res = await m.dash("POST", "/app/channels", { kind: "paybill", shortcode: "247247", display_name: "NJERI HOME" });
     assert.equal(res.json().error.code, "account_number_required");
   });
 
-  it("verifies a till with KES 1, turns on live, adds starter credit and a live key", async () => {
+  it("opens Tills and live keys only after KYC approval, and the till is active at once", async () => {
     const m = await merchant(c);
-    const ch = (await m.dash("POST", "/app/channels", { kind: "till", shortcode: "5521093", display_name: "Njeri Home Stores" })).json();
-    assert.equal(ch.status, "unverified");
-    const early = await m.dash("POST", `/app/channels/${ch.id}/confirm`);
-    assert.equal(early.json().error.code, "verification_incomplete");
-    const v = (await m.dash("POST", `/app/channels/${ch.id}/verify`)).json();
-    assert.equal(v.payment.amount, 1);
-    await waitFor(async () => (await m.dash("GET", `/app/payments/${v.payment.id}`)).json().status === "succeeded");
-    const done = (await m.dash("POST", `/app/channels/${ch.id}/confirm`)).json();
-    assert.equal(done.channel.status, "verified");
-    assert.match(done.live_key, /^sp_live_/);
+    const early = await m.dash("POST", "/app/channels", { kind: "till", shortcode: "5521093", display_name: "Njeri Home Stores" });
+    assert.equal(early.json().error.code, "verification_required");
+    assert.equal((await m.dash("POST", "/app/keys", { name: "prod", mode: "live", scopes: ["payments:write"] })).json().error.code, "account_not_live");
+    await approve(m);
     const me = (await m.dash("GET", "/app/me")).json();
     assert.equal(me.merchant.live_enabled, true);
-    assert.equal(me.balances.live.fee_credit.available, 50);
+    assert.equal(me.balances.live.fee_credit.available, 50, "starter credit on approval");
+    const ch = (await m.dash("POST", "/app/channels", { kind: "till", shortcode: "5521093", display_name: "Njeri Home Stores" })).json();
+    assert.equal(ch.status, "verified");
+    assert.equal(ch.is_default, true);
+    const key = (await m.dash("POST", "/app/keys", { name: "prod", mode: "live", scopes: ["payments:write", "payouts:write", "read"] })).json();
+    assert.match(key.secret, /^sp_live_/);
   });
 });
 

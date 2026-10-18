@@ -18,6 +18,11 @@ export type Config = {
   adminToken: string | null;
   resendApiKey: string | null;
   mailFrom: string;
+  /**
+   * One-time codes: phone and email at sign-up, SMS at sign-in, SMS before live
+   * money leaves from the dashboard. Off until SMS and email providers are set.
+   */
+  codes: boolean;
   /** Africa's Talking SMS for sign-up, sign-in and money-movement codes. Null logs messages instead. */
   sms: { username: string; apiKey: string; senderId: string | null } | null;
   allowPrivateWebhooks: boolean;
@@ -64,6 +69,7 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
     adminToken: e.ADMIN_TOKEN ?? null,
     resendApiKey: e.RESEND_API_KEY ?? null,
     mailFrom: e.MAIL_FROM ?? "SwiftPal <onboarding@resend.dev>",
+    codes: e.VERIFICATION_CODES === "on",
     sms: e.AT_USERNAME && e.AT_API_KEY ? { username: e.AT_USERNAME, apiKey: e.AT_API_KEY, senderId: e.AT_SENDER_ID || null } : null,
     allowPrivateWebhooks: e.ALLOW_PRIVATE_WEBHOOKS === "true" && env !== "production",
     storage:

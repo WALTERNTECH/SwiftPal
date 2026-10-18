@@ -11,7 +11,6 @@ const NAV = [
   { href: "/#products", label: "Products" },
   { href: "/pricing", label: "Pricing" },
   { href: "/docs", label: "Docs" },
-  { href: "/docs/sandbox", label: "Sandbox" },
 ];
 
 export function SiteHeader() {

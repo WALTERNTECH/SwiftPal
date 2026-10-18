@@ -95,9 +95,9 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
           if (!user) throw new ApiError(401, "not_signed_in", "Sign in to continue.", "authentication_error");
           req.user = user;
           const path = req.url.split("?")[0];
-          if (!user.phone_verified_at && !["/app/auth/verify-phone", "/app/auth/resend-phone", "/app/me"].includes(path))
+          if (app.cfg.codes && !user.phone_verified_at && !["/app/auth/verify-phone", "/app/auth/resend-phone", "/app/me"].includes(path))
             throw new ApiError(403, "phone_unverified", "Verify your phone number first.", "permission_error");
-          if (user.phone_verified_at && !user.email_verified_at && !["/app/auth/verify-email", "/app/auth/resend", "/app/me"].includes(path))
+          if (app.cfg.codes && user.phone_verified_at && !user.email_verified_at && !["/app/auth/verify-email", "/app/auth/resend", "/app/me"].includes(path))
             throw new ApiError(403, "email_unverified", "Verify your email first.", "permission_error");
         });
         const merchant = (req: FastifyRequest) => accounts.getMerchant(app.db, req.user!.merchant_id);
@@ -126,6 +126,7 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
             channels: (await channels.listChannels(app, m.id)).map(channels.presentChannel),
             verification: await verification.current(app, m.id),
             live_available: !!app.mpesa.live,
+            codes: app.cfg.codes,
             pending: Object.fromEntries(
               (
                 await app.db.query<{ mode: string; n: number }>(
@@ -155,6 +156,7 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
         s.post("/me/phone/confirm", async (req) => {
           const code = z.string().regex(/^\d{6}$/, "must be 6 digits");
           const b = parse(z.object({ phone, current_code: code, new_code: code }), req.body);
+          if (!app.cfg.codes) throw new ApiError(403, "phone_change_unavailable", "Contact support to change your number.", "permission_error");
           await accounts.confirmPhoneChange(app, req.user!, b.phone, b.current_code, b.new_code);
           return { ok: true };
         });
@@ -164,6 +166,7 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
           const a = parse(confirmable, req.body);
           if (a.mode === "test") return { required: false };
           await precheck(req, a);
+          if (!app.cfg.codes) return { required: false };
           const { purpose, payload, text } = describe(a, req.user!.phone);
           return { required: true, ...(await otp.issue(app, { userId: req.user!.id, purpose, phone: req.user!.phone, payload, text })) };
         });
@@ -181,6 +184,7 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
         async function confirm(req: FastifyRequest, a: Confirmable, code: string | undefined) {
           if (a.mode === "test") return;
           await precheck(req, a);
+          if (!app.cfg.codes) return;
           const d = describe(a, req.user!.phone);
           await otp.check(app, { userId: req.user!.id, purpose: d.purpose, code, payload: d.payload });
         }
@@ -231,14 +235,6 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
             passkey: b.passkey,
           });
           return reply.code(201).send(channels.presentChannel(ch));
-        });
-        s.post("/channels/:id/verify", async (req) => {
-          const out = await channels.startVerification(app, await merchant(req), req.user!, (req.params as { id: string }).id);
-          return { channel: channels.presentChannel(out.channel), payment: out.payment && presentPayment(out.payment) };
-        });
-        s.post("/channels/:id/confirm", async (req) => {
-          const out = await channels.confirmVerification(app, req.user!.merchant_id, (req.params as { id: string }).id);
-          return { channel: channels.presentChannel(out.channel), live_key: out.liveKey };
         });
         s.post("/channels/:id/default", async (req) => {
           await channels.setDefaultChannel(app, req.user!.merchant_id, (req.params as { id: string }).id);

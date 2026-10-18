@@ -16,7 +16,7 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
   const me = useAccount();
   const mode = useMode();
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<string[]>(["payments:write", "read"]);
+  const [scopes, setScopes] = useState<string[]>(["payments:write", "payouts:write", "read"]);
   const [fresh, setFresh] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -26,7 +26,7 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
   useEffect(() => {
     if (open) {
       setName("");
-      setScopes(["payments:write", "read"]);
+      setScopes(["payments:write", "payouts:write", "read"]);
       setFresh(null);
       setBusy(false);
       setError("");
@@ -54,7 +54,7 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
     <Modal
       open={open}
       onClose={onClose}
-      title={`New ${mode} key`}
+      title="New API key"
       footer={
         <>
           <button className="btn btn-line" onClick={onClose}>Cancel</button>
@@ -82,7 +82,7 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
       {liveLocked && (
         <div className="callout warn">
           <Icon name="alert" size={16} />
-          <span>Live keys are issued once a Till or Paybill is verified.</span>
+          <span>API keys open once your account is verified.</span>
         </div>
       )}
       <div className="field">

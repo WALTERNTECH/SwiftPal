@@ -1,7 +1,9 @@
 import type { App } from "../app.js";
 import { one } from "../db.js";
 import { ApiError, newId, open, seal, token } from "../lib.js";
+import { STARTER_CREDIT_CENTS } from "../pricing.js";
 import type { Merchant } from "./accounts.js";
+import { credit } from "./wallet.js";
 
 export type Kind = "individual" | "business";
 
@@ -132,6 +134,9 @@ export async function decide(app: App, id: string, approve: boolean, note?: stri
     await q.query(`update verifications set status = $2, reviewer_note = $3, reviewed_at = now() where id = $1`, [id, approve ? "approved" : "rejected", note ?? null]);
     await q.query(`update merchants set verification_status = $2 where id = $1`, [v.merchant_id, approve ? "approved" : "rejected"]);
     if (approve) {
+      const m = await one<{ starter_credit_given: boolean }>(q, `select starter_credit_given from merchants where id = $1`, [v.merchant_id]);
+      await q.query(`update merchants set live_enabled = true, starter_credit_given = true where id = $1`, [v.merchant_id]);
+      if (!m?.starter_credit_given) await credit(q, v.merchant_id, "live", "fee", STARTER_CREDIT_CENTS, "starter_credit", id);
       await q.query(`update api_keys set scopes = array_append(scopes, 'payouts:write') where merchant_id = $1 and mode = 'live' and revoked_at is null and not ('payouts:write' = any(scopes))`, [
         v.merchant_id,
       ]);

@@ -6,12 +6,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { Icon, type IconName } from "@/components/Icon";
 import { LogoMark } from "@/components/Logo";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
-import { api, clearCache, invalidate, nextStep, setMode, useAccount, useApi, useMe, useMode, usePayments, usePayouts, type Me } from "@/lib/api";
+import { api, clearCache, needsCodes, nextStep, useAccount, useApi, useMe, useMode, usePayments, usePayouts, type Me } from "@/lib/api";
 import { money, timeAgo } from "@/lib/format";
 import { ActionsProvider, useActions, type Action } from "./actions";
 import { CommandPalette } from "./CommandPalette";
 import { currentItem, isActive, NAV } from "./nav";
-import { ToastHost, useToast } from "./ui";
+import { ToastHost } from "./ui";
 
 export function DashShell({ children }: { children: ReactNode }) {
   const { data: me, error, reload } = useMe();
@@ -21,10 +21,10 @@ export function DashShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (error?.status === 401) router.replace("/login");
-    else if (me && (!me.user.phone_verified_at || !me.user.email_verified_at)) router.replace(nextStep(me));
+    else if (me && needsCodes(me)) router.replace(nextStep(me));
   }, [error, me, router]);
 
-  if (!me || !me.user.phone_verified_at || !me.user.email_verified_at) {
+  if (!me || needsCodes(me)) {
     return (
       <div className="dash-loading">
         <LogoMark size={34} />
@@ -51,7 +51,6 @@ function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const [navOpen, setNavOpen] = useState(false);
   const [cmdk, setCmdk] = useState(false);
-  const test = useMode() === "test";
 
   useEffect(() => setNavOpen(false), [path]);
   useEffect(() => {
@@ -66,16 +65,11 @@ function Shell({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className={`dash ${test ? "is-test" : ""}`}>
+    <div className="dash">
       <div className="app-bg" aria-hidden />
       <Sidebar open={navOpen} />
       {navOpen && <div className="side-scrim" onClick={() => setNavOpen(false)} />}
       <div className="dash-main">
-        {test && (
-          <div className="test-strip">
-            <span>Test mode</span> Sandbox data
-          </div>
-        )}
         <Topbar onMenu={() => setNavOpen(true)} onSearch={() => setCmdk(true)} />
         <main className="dash-content" key={path}>
           {children}
@@ -96,11 +90,9 @@ const VERIFY: Record<string, { label: string; tone: string }> = {
 function Sidebar({ open }: { open: boolean }) {
   const me = useAccount();
   const mode = useMode();
-  const toast = useToast();
   const path = usePathname();
   const navRef = useRef<HTMLElement>(null);
   const [bar, setBar] = useState<{ top: number; height: number } | null>(null);
-  const [resetting, setResetting] = useState(false);
   const pending = me.pending[mode] ?? 0;
   const unverifiedChannels = me.channels.filter((c) => c.status !== "verified").length;
   const vs = me.merchant.verification_status;
@@ -141,15 +133,6 @@ function Sidebar({ open }: { open: boolean }) {
             <span>{me.merchant.type === "individual" ? "Individual" : me.merchant.type === "ngo" ? "Organisation" : "Business"}</span>
           </div>
         </div>
-        <div className="mode-seg" role="group" aria-label="Mode">
-          <button aria-pressed={mode === "test"} className="t" onClick={() => setMode("test")}>
-            Test
-          </button>
-          <button aria-pressed={mode === "live"} className="l" onClick={() => setMode("live")}>
-            Live
-          </button>
-          <i className={`mode-thumb ${mode}`} />
-        </div>
       </div>
 
       <nav className="side-nav" aria-label="Dashboard" ref={navRef}>
@@ -176,34 +159,13 @@ function Sidebar({ open }: { open: boolean }) {
             </span>
             <span className="grow">
               <b>{vs === "submitted" ? "Verification in review" : vs === "rejected" ? "Resubmit verification" : "Verify your account"}</b>
-              <span>{vs === "submitted" ? "We'll email you" : vs === "rejected" ? "See what needs changing" : "National ID and selfie"}</span>
+              <span>{vs === "submitted" ? "We're reviewing your documents" : vs === "rejected" ? "See what needs changing" : "National ID and selfie"}</span>
             </span>
             <Icon name="chevronRight" size={14} />
           </Link>
         )}
         <div className="side-row">
           <ThemeSwitch label={false} />
-          {mode === "test" && (
-            <button
-              className="side-reset"
-              title="Clear test payments, payouts, logs and webhook deliveries, and refill test balances"
-              disabled={resetting}
-              onClick={async () => {
-                if (!confirm("Clear all test-mode data and refill the test balances? Live data isn't touched.")) return;
-                setResetting(true);
-                try {
-                  await api("/app/sandbox/reset", { method: "POST" });
-                  invalidate("/app/");
-                  toast("Sandbox reset");
-                } catch (err) {
-                  toast((err as Error).message, "alert");
-                }
-                setResetting(false);
-              }}
-            >
-              {resetting ? "Resetting…" : "Reset sandbox"}
-            </button>
-          )}
         </div>
       </div>
     </aside>
@@ -283,7 +245,7 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
               {NEW_ITEMS.map((n) => (
                 <button key={n.a} role="menuitem" onClick={() => { setMenu(null); open(n.a); }}>
                   <span className="pop-ic"><Icon name={n.icon} size={14} /></span>
-                  {n.a === "payment" && mode === "test" ? "Send test STK Push" : n.label}
+                  {n.label}
                 </button>
               ))}
             </div>

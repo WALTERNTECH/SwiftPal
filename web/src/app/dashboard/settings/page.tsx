@@ -11,7 +11,6 @@ const TABS = [
   { v: "profile", t: "Profile" },
   { v: "business", t: "Business" },
   { v: "team", t: "Team" },
-  { v: "sandbox", t: "Sandbox" },
 ] as const;
 type Tab = (typeof TABS)[number]["v"];
 
@@ -38,7 +37,6 @@ export default function Settings() {
           {tab === "profile" && <Profile />}
           {tab === "business" && <BusinessTab />}
           {tab === "team" && <Team />}
-          {tab === "sandbox" && <Sandbox />}
         </div>
       </div>
     </>
@@ -297,50 +295,5 @@ function Team() {
         Roles planned: Developer (keys, webhooks, logs), Finance (payouts, wallet), Support (read-only transactions).
       </div>
     </section>
-  );
-}
-
-function Sandbox() {
-  const toast = useToast();
-  const [busy, setBusy] = useState<"seed" | "reset" | null>(null);
-
-  async function run(what: "seed" | "reset") {
-    if (what === "reset" && !confirm("Clear all test-mode data and refill the test balances? Live data isn't touched.")) return;
-    setBusy(what);
-    try {
-      await api(`/app/sandbox/${what}`, { method: "POST" });
-      invalidate("/app/");
-      toast(what === "seed" ? "Sample history loaded" : "Sandbox reset");
-    } catch (err) {
-      toast((err as ApiError).message, "alert");
-    }
-    setBusy(null);
-  }
-
-  return (
-    <>
-      <section className="panel panel-body stack">
-        <b>Sample history</b>
-        <p className="muted" style={{ fontSize: 14 }}>
-          Adds sixty days of test payments and payouts so the overview and analytics have something to show. They&apos;re marked as samples and never touch live mode.
-        </p>
-        <div>
-          <button className="btn btn-line" disabled={!!busy} onClick={() => run("seed")}>
-            {busy === "seed" ? <span className="spinner" /> : "Load sample history"}
-          </button>
-        </div>
-      </section>
-      <section className="panel panel-body stack">
-        <b>Reset sandbox</b>
-        <p className="muted" style={{ fontSize: 14 }}>
-          Deletes test payments, payouts, ledger entries, request logs and webhook deliveries, and refills the test balances. Keys, endpoints and channels stay.
-        </p>
-        <div>
-          <button className="btn btn-danger" disabled={!!busy} onClick={() => run("reset")}>
-            {busy === "reset" ? <span className="spinner" /> : "Reset test data"}
-          </button>
-        </div>
-      </section>
-    </>
   );
 }

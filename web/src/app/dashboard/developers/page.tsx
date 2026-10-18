@@ -5,6 +5,7 @@ import { useState } from "react";
 import { CopyButton } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
+import { Integrate } from "@/components/dash/Integrate";
 import { Empty, PageHeader, useToast } from "@/components/dash/ui";
 import { api, invalidate, useAccount, useApi, useMode, type ApiError, type ApiKey } from "@/lib/api";
 import { dateTime, timeAgo } from "@/lib/format";
@@ -55,7 +56,7 @@ export default function ApiKeys() {
         }
         actions={
           <button className="btn btn-pine" onClick={() => open("key")} disabled={liveLocked}>
-            <Icon name="plus" size={15} /> Create {mode} key
+            <Icon name="plus" size={15} /> Create API key
           </button>
         }
       />
@@ -63,8 +64,8 @@ export default function ApiKeys() {
       {liveLocked && (
         <div className="callout warn">
           <Icon name="lock" size={16} />
-          <span className="grow">Live keys are issued once a Till or Paybill is verified.</span>
-          <Link href="/dashboard/channels" className="btn btn-line btn-sm">Verify a channel</Link>
+          <span className="grow">{me.merchant.verification_status === "submitted" ? "API keys open once your verification is approved." : "Verify your account to create API keys."}</span>
+          {me.merchant.verification_status !== "submitted" && <Link href="/dashboard/verification" className="btn btn-pine btn-sm">Verify</Link>}
         </div>
       )}
 
@@ -135,9 +136,11 @@ export default function ApiKeys() {
         ) : loading ? (
           <div className="empty"><span className="spinner" /></div>
         ) : (
-          <Empty icon="key" title={`No ${mode} keys`} body={mode === "live" ? "Create a live key once your channel is verified." : "Create a test key to start calling the API."} />
+          <Empty icon="key" title="No API keys yet" body={liveLocked ? "Available once your account is verified." : "Create a key and add it to your server as SWIFTPAL_SECRET_KEY."} />
         )}
       </section>
+
+      <Integrate />
 
       <div className="grid-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
         <div className="panel panel-body">

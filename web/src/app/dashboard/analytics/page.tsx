@@ -19,7 +19,7 @@ export default function Analytics() {
   const header = (
     <PageHeader
       title="Analytics"
-      sub={`${mode === "test" ? "Sandbox" : "Live"} · last ${range} days vs the ${range} before`}
+      sub={`Last ${range} days vs the ${range} before`}
       actions={
         <>
           <div className="range" role="group" aria-label="Range">

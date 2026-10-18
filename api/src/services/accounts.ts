@@ -69,16 +69,18 @@ export async function signUp(app: App, input: { firstName: string; lastName: str
     await q.query(`insert into merchants (id, account_code, name) values ($1,$2,$3)`, [merchantId, accountCode, `${input.firstName.trim()} ${input.lastName.trim()}`]);
     await createBalances(q, merchantId);
     const userId = newId("usr");
+    // With codes off, the number and email are taken as given.
+    const verified = app.cfg.codes ? null : new Date().toISOString();
     await q.query(
-      `insert into users (id, merchant_id, email, phone, first_name, last_name, password_hash) values ($1,$2,$3,$4,$5,$6,$7)`,
-      [userId, merchantId, email, phone, input.firstName.trim(), input.lastName.trim(), passwordHash],
+      `insert into users (id, merchant_id, email, phone, first_name, last_name, password_hash, phone_verified_at, email_verified_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$8)`,
+      [userId, merchantId, email, phone, input.firstName.trim(), input.lastName.trim(), passwordHash, verified],
     );
     const session = await createSession(q, userId, input.ip, input.ua);
     const user = (await one<User>(q, `select ${USER_COLS} from users where id = $1`, [userId]))!;
     return { user, session };
   });
   // A failed SMS doesn't undo the account; the verify screen can resend.
-  await sendPhoneCode(app, user).catch((e: Error) => app.log.warn("sign-up sms", e.message));
+  if (app.cfg.codes) await sendPhoneCode(app, user).catch((e: Error) => app.log.warn("sign-up sms", e.message));
   return { user, session };
 }
 
@@ -156,8 +158,6 @@ export async function verifyEmail(app: App, userId: string, code: string) {
     await q.query(`update email_codes set used_at = now() where id = $1`, [row.id]);
     await q.query(`update users set email_verified_at = now() where id = $1 and email_verified_at is null`, [userId]);
     const user = (await one<User>(q, `select ${USER_COLS} from users where id = $1`, [userId]))!;
-    const hasTestKey = await one(q, `select 1 from api_keys where merchant_id = $1 and mode = 'test' and revoked_at is null`, [user.merchant_id]);
-    if (!hasTestKey) await insertKey(app, q, user.merchant_id, "test", "Default test key", [...SCOPES]);
     return user;
   });
   if (!user) throw new ApiError(400, "wrong_code", "That code doesn't match. Check the latest email.");
@@ -183,7 +183,7 @@ export async function signIn(app: App, input: { email: string; password: string;
   const { password_hash: _drop, ...rest } = row;
   const user = rest as User;
   // An account that never proved its number finishes sign-up first; there's no phone to send to.
-  if (!user.phone_verified_at) return { user, session: await createSession(app.db, user.id, input.ip, input.ua), otp: null };
+  if (!app.cfg.codes || !user.phone_verified_at) return { user, session: await createSession(app.db, user.id, input.ip, input.ua), otp: null };
   const session = await createSession(app.db, user.id, input.ip, input.ua, true);
   const sent = await sendLoginCode(app, user).catch((e: ApiError) => ({ phone_hint: otp.maskPhone(user.phone), expires_in: 0, error: e.message }));
   return { user, session, otp: sent };
@@ -285,6 +285,7 @@ export async function resetPassword(app: App, raw: string, password: string) {
 // ---------- phone change: a code to the current number and one to the new ----------
 
 export async function startPhoneChange(app: App, user: User, phone: string) {
+  if (!app.cfg.codes) throw new ApiError(403, "phone_change_unavailable", "Contact support to change your number.", "permission_error");
   if (phone === user.phone) throw new ApiError(400, "same_phone", "That's already your number.");
   await otp.issue(app, {
     userId: user.id,

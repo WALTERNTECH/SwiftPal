@@ -4,7 +4,7 @@
 // (next.config.ts). Responses are cached per path; mutations invalidate by
 // prefix and every subscriber refetches.
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type Mode = "test" | "live";
 export type Account = "fee" | "float";
@@ -58,6 +58,8 @@ export type Me = {
   channels: Channel[];
   verification: VerificationState;
   live_available: boolean;
+  /** One-time codes at sign-up and sign-in; off until SMS and email are set up. */
+  codes: boolean;
   pending: Partial<Record<Mode, number>>;
 };
 export type PayStatus = "pending" | "succeeded" | "failed" | "cancelled" | "expired";
@@ -151,7 +153,27 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; form?: FormData } = {}): Promise<T> {
+// The API sleeps when idle on Render's free plan. While it starts, Render answers
+// the proxy with its own 502/503/504 page and the request never reaches us, so
+// it is safe to wait for /health and send it again.
+let waking: Promise<void> | null = null;
+export function wakeApi(): Promise<void> {
+  waking ??= (async () => {
+    const until = Date.now() + 120_000;
+    while (Date.now() < until) {
+      try {
+        if ((await fetch("/backend/health", { cache: "no-store" })).ok) return;
+      } catch {
+        /* still starting */
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    throw new ApiError(503, "unavailable", "SwiftPal is unavailable right now. Try again in a minute.");
+  })().finally(() => setTimeout(() => (waking = null), 0));
+  return waking;
+}
+
+export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; form?: FormData } = {}, attempt = 0): Promise<T> {
   const method = opts.method ?? (opts.body || opts.form ? "POST" : "GET");
   let res: Response;
   try {
@@ -169,8 +191,11 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
   const json = text ? safeJson(text) : null;
   if (!res.ok) {
     const e = (json as { error?: { code: string; message: string; details?: Record<string, unknown> } } | null)?.error;
-    // The free server sleeps; the proxy answers 502/504 while it wakes.
-    if (!e && (res.status === 502 || res.status === 503 || res.status === 504)) throw new ApiError(res.status, "waking", "The server is waking up. Try again in a few seconds.");
+    if (!e && (res.status === 502 || res.status === 503 || res.status === 504)) {
+      if (attempt >= 2) throw new ApiError(res.status, "unavailable", "SwiftPal is unavailable right now. Try again in a minute.");
+      await wakeApi();
+      return api<T>(path, opts, attempt + 1);
+    }
     throw new ApiError(res.status, e?.code ?? "error", e?.message ?? `Request failed (${res.status}).`, e?.details);
   }
   return json as T;
@@ -252,40 +277,24 @@ export function usePaymentWatch(id: string | null) {
   return current;
 }
 
-// ---------- mode: a per-viewer preference ----------
-const MODE_KEY = "swiftpal-mode";
-const modeSubs = new Set<() => void>();
-function readMode(): Mode {
-  try {
-    return localStorage.getItem(MODE_KEY) === "live" ? "live" : "test";
-  } catch {
-    return "test";
-  }
-}
-export function setMode(m: Mode) {
-  try {
-    localStorage.setItem(MODE_KEY, m);
-  } catch {
-    /* storage blocked: mode resets on reload */
-  }
-  modeSubs.forEach((f) => f());
-}
-export function useMode(): Mode {
-  return useSyncExternalStore(
-    (f) => {
-      modeSubs.add(f);
-      return () => modeSubs.delete(f);
-    },
-    readMode,
-    () => "test",
-  );
-}
+// ---------- mode ----------
+/** The dashboard runs in live mode only; the API keeps test mode for its own test suite. */
+export const useMode = (): Mode => "live";
 
 export const useMe = () => useApi<Me>("/app/me");
 
 /** Where a signed-in account belongs: phone code, email code, onboarding, then the dashboard. */
 export const nextStep = (me: Me) =>
-  !me.user.phone_verified_at ? "/verify-phone" : !me.user.email_verified_at ? "/verify-email" : !me.merchant.onboarding_done ? "/onboarding" : "/dashboard";
+  me.codes && !me.user.phone_verified_at
+    ? "/verify-phone"
+    : me.codes && !me.user.email_verified_at
+      ? "/verify-email"
+      : !me.merchant.onboarding_done
+        ? "/onboarding"
+        : "/dashboard";
+
+/** True until the account has proved what the current settings ask for. */
+export const needsCodes = (me: Me) => me.codes && (!me.user.phone_verified_at || !me.user.email_verified_at);
 
 /** Inside the dashboard shell, which renders nothing until /app/me has loaded. */
 export function useAccount(): Me {

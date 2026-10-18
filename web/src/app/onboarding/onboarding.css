@@ -45,3 +45,7 @@
   .choice-grid, .two { grid-template-columns: 1fr; }
   .onb-actions { flex-wrap: wrap; }
 }
+.onb-done { display: grid; justify-items: start; gap: 14px; }
+.onb-done-ic { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--pine-wash); color: var(--pine-ink); }
+.onb-done p { margin-top: 6px; }
+.onb-card .vf { margin-top: 4px; }

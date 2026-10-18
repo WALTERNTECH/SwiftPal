@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 import { Logo } from "@/components/Logo";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
+import { WakeApi } from "./WakeApi";
 
 /** One centred card on paper and grain. `alt` sits under the card (e.g. "Have an account? Sign in"). */
 export function AuthShell({ children, alt }: { children: ReactNode; alt?: ReactNode }) {
   return (
     <div className="auth">
       <div className="app-bg" aria-hidden />
+      <WakeApi />
       <header className="auth-top">
         <Logo />
       </header>

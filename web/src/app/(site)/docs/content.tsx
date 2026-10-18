@@ -2,8 +2,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
-import { B2C_BANDS, STARTER_CREDIT } from "@/lib/pricing";
-import { SANDBOX_NUMBERS, SITE } from "@/lib/site";
+import { B2C_BANDS } from "@/lib/pricing";
+import { SITE } from "@/lib/site";
 import { payoutSnippets, STK_RESPONSE, stkSnippets, VERIFY_SNIPPETS, WEBHOOK_EVENT } from "@/lib/snippets";
 
 export type DocPage = { slug: string; title: string; group: string; lede: string; body: () => ReactNode };
@@ -55,12 +55,11 @@ const ERRORS: [number, string, string][] = [
   [401, "invalid_api_key", "The key is missing, mistyped or revoked. Check the Authorization header."],
   [403, "key_scope_denied", "The key exists but is not allowed to call this endpoint. Edit its scopes in the dashboard."],
   [403, "ip_not_allowed", "The key has an IP allowlist and this request came from elsewhere."],
-  [403, "account_not_live", "A live key was used before the account went live. Use your sp_test_ key until then."],
+  [403, "account_not_live", "The account isn't verified yet. API keys and payments open once verification is approved."],
   [403, "payouts_not_enabled", "B2C needs a verified account. Complete Verification in the dashboard."],
   [402, "insufficient_fee_credit", "Fee credit cannot cover the held fee. Top up, or turn on auto-cover from payout float."],
   [409, "insufficient_float", "Payout float is lower than the payout amount."],
   [409, "idempotency_conflict", "This Idempotency-Key was already used with a different request body."],
-  [422, "channel_unverified", "The Till or Paybill has not completed its KES 1 verification."],
   [429, "rate_limited", `More than ${SITE.rateLimitPerMinute} requests a minute on this key. Respect the Retry-After header.`],
   [503, "mpesa_unavailable", "Safaricom is not accepting requests right now. Nothing was charged. Retry with backoff."],
 ];
@@ -81,9 +80,9 @@ const FAQ: [string, string][] = [
   ["Do I need my own Daraja app or shortcode approval?", "No. SwiftPal holds the Daraja integration. You add the Paybill or Till you already use, and prompts pay into it."],
   ["Where do customer payments settle?", "In the Paybill or Till you registered, the same as a payment made from the M-Pesa menu."],
   ["What happens when fee credit runs out?", "Requests return 402 insufficient_fee_credit. Turn on auto-cover to take fees from payout float instead, and set a low-balance alert in the dashboard."],
-  ["What do I need to go live?", "For STK Push, a Till or Paybill verified with a KES 1 prompt. For B2C payouts, a verified account: national ID and a selfie holding it for individuals; certificate of incorporation, CR12 and a director's ID for businesses."],
+  ["What do I need to go live?", "A verified account: national ID and a selfie holding it for individuals; certificate of incorporation, CR12 and a director's ID for businesses. Once it's approved, add your Till or Paybill and create an API key."],
   ["Can I withdraw payout float?", "Yes, to the M-Pesa number on your account, at the normal B2C fee for the amount."],
-  ["Is there a sandbox?", "Yes. sp_test_ keys simulate prompts, payouts and webhooks with the same responses as live. See Sandbox for numbers that force each outcome."],
+  ["How do I test before launch?", "Send yourself a small real payment. STK Push under KES 10 has no SwiftPal fee, so a KES 1 prompt to your own phone costs nothing but the shilling, and it lands in your own till."],
 ];
 
 export const DOCS: DocPage[] = [
@@ -118,7 +117,7 @@ export const DOCS: DocPage[] = [
           <table className="table">
             <tbody>
               <tr><td>Base URL</td><td><C>{SITE.apiBase}</C></td></tr>
-              <tr><td>Auth</td><td><C>Authorization: Bearer sp_test_…</C> or <C>sp_live_…</C></td></tr>
+              <tr><td>Auth</td><td><C>Authorization: Bearer sp_live_…</C></td></tr>
               <tr><td>Format</td><td>JSON in, JSON out. Field names are always <C>snake_case</C>.</td></tr>
               <tr><td>Amounts</td><td>Whole Kenyan shillings, as integers.</td></tr>
               <tr><td>Phones</td><td>Any common Kenyan format. We return <C>2547XXXXXXXX</C>.</td></tr>
@@ -155,43 +154,40 @@ export const DOCS: DocPage[] = [
     slug: "quickstart",
     group: "Get started",
     title: "Quickstart",
-    lede: "Send a sandbox STK Push and receive its webhook in about five minutes. No real money moves.",
+    lede: "From a new account to your first M-Pesa payment.",
     body: () => (
       <>
-        <h2>1. Get your test key</h2>
+        <h2>1. Create and verify your account</h2>
         <p>
-          <Link className="link" href="/signup">Create an account</Link> and open <b>Developers → API keys</b>. Your{" "}
-          <C>sp_test_</C> key is ready as soon as you verify your email. Put it in an environment variable. Never put it
-          in client-side code.
+          <Link className="link" href="/signup">Create an account</Link>, add your business details and upload your ID (or
+          company documents). Payments open once it&apos;s approved.
         </p>
-        <CodeBlock tabs={[{ label: ".env", lang: "bash", code: "SWIFTPAL_KEY=sp_test_YOUR_SECRET_KEY" }]} />
-        <h2>2. Send a prompt</h2>
+        <h2>2. Add your Till or Paybill</h2>
         <p>
-          In test mode, <C>254700000000</C> always succeeds after about five seconds. See{" "}
-          <Link className="link" href="/docs/sandbox">Sandbox</Link> for numbers that fail on purpose.
+          Under <b>Channels</b>, add the Till or Paybill your customers pay into. Money goes straight to it.
         </p>
-        <CodeBlock tabs={stkSnippets(undefined, "254700000000", 100)} />
-        <p>The response comes back straight away with the payment in <C>pending</C>:</p>
-        <CodeBlock tabs={[{ label: "201 Created", lang: "json", code: STK_RESPONSE.replace("254712345678", "254700000000").replace('"amount": 1250', '"amount": 100') }]} />
-        <h2>3. Receive the result</h2>
+        <h2>3. Create an API key</h2>
+        <p>
+          Under <b>Developers → API keys</b>. Put it in an environment variable on your server, never in browser or app code.
+        </p>
+        <CodeBlock tabs={[{ label: ".env", lang: "bash", code: "SWIFTPAL_SECRET_KEY=sp_live_YOUR_SECRET_KEY" }]} />
+        <h2>4. Request a payment</h2>
+        <CodeBlock tabs={stkSnippets(undefined, "254712345678", 100)} />
+        <p>The response comes back straight away with the payment in <C>pending</C> while the customer enters their PIN:</p>
+        <CodeBlock tabs={[{ label: "201 Created", lang: "json", code: STK_RESPONSE.replace('"amount": 1250', '"amount": 100') }]} />
+        <h2>5. Receive the result</h2>
         <p>
           Add an endpoint under <b>Developers → Webhooks</b>. When the customer pays, we <C>POST</C> a{" "}
-          <C>payment.succeeded</C> event to it. Return any <C>2xx</C> quickly, then do your work.
+          <C>payment.succeeded</C> event to it. Verify the signature, return any <C>2xx</C> quickly, then fulfil the order.
         </p>
         <CodeBlock tabs={[{ label: "payment.succeeded", lang: "json", code: WEBHOOK_EVENT }]} />
         <div className="callout pine">
           <Icon name="info" size={16} />
           <span>
-            No public URL yet? The dashboard shows every event under <b>Developers → Webhooks → Deliveries</b>, and you can
-            replay any of them once your endpoint is up.
+            Building with an AI assistant? <b>Developers → API keys</b> has a prompt you can paste into Cursor, Claude Code
+            or Copilot with everything it needs.
           </span>
         </div>
-        <h2>4. Go live</h2>
-        <ol>
-          <li>Add your Till or Paybill under <b>Channels</b> and approve the KES 1 verification prompt.</li>
-          <li>Top up fee credit. You get KES {STARTER_CREDIT} free when your first channel is verified.</li>
-          <li>Swap <C>sp_test_</C> for your <C>sp_live_</C> key. Nothing else in your code changes.</li>
-        </ol>
       </>
     ),
   },
@@ -203,16 +199,6 @@ export const DOCS: DocPage[] = [
     body: () => (
       <>
         <CodeBlock tabs={[{ label: "Header", lang: "text", code: "Authorization: Bearer sp_live_YOUR_SECRET_KEY" }]} />
-        <h2>Test and live keys</h2>
-        <div className="panel table-wrap">
-          <table className="table">
-            <thead><tr><th>Prefix</th><th>Mode</th><th>Money moves?</th></tr></thead>
-            <tbody>
-              <tr><td><C>sp_test_</C></td><td>Sandbox</td><td>No. Prompts and payouts are simulated.</td></tr>
-              <tr><td><C>sp_live_</C></td><td>Live</td><td>Yes. Real M-Pesa prompts and payouts.</td></tr>
-            </tbody>
-          </table>
-        </div>
         <h2>Scopes</h2>
         <p>Give each key only what it needs. A key that can only read balances is harmless if it leaks.</p>
         <Params
@@ -222,53 +208,11 @@ export const DOCS: DocPage[] = [
             ["read", "scope", "Read payments, payouts, balances and events"],
           ]}
         />
-        <h2>IP allowlist and rotation</h2>
+        <h2>Rotation</h2>
         <p>
-          Restrict a live key to your server&apos;s IP addresses. To rotate, roll the key in the dashboard. The old key
-          keeps working for the grace period you choose (up to 72 hours) while you deploy the new one.
+          Roll a key in the dashboard to get a new secret. The old one stops working immediately, so update your server
+          with the new secret straight away.
         </p>
-      </>
-    ),
-  },
-  {
-    slug: "sandbox",
-    group: "Get started",
-    title: "Sandbox",
-    lede: "Test mode behaves like live, with the same endpoints, responses, webhooks and timings, but no money moves.",
-    body: () => (
-      <>
-        <p>
-          Use your <C>sp_test_</C> key. Prompts are never sent to a real phone. These numbers force each outcome you need
-          to handle:
-        </p>
-        <div className="panel table-wrap">
-          <table className="table">
-            <thead><tr><th>Phone</th><th>Outcome</th><th>M-Pesa code</th><th>What happens</th></tr></thead>
-            <tbody>
-              {SANDBOX_NUMBERS.map((n) => (
-                <tr key={n.phone}>
-                  <td className="num">{n.phone}</td>
-                  <td><span className={`badge ${n.outcome === "success" ? "ok" : n.outcome === "cancelled" ? "warn" : "bad"}`}>{n.outcome}</span></td>
-                  <td className="num">{n.code}</td>
-                  <td>{n.note}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p>Any other valid number succeeds. Payouts to the same numbers follow the same rules.</p>
-        <h2>Test balances</h2>
-        <p>
-          Test mode starts with KES 10,000 fee credit and KES 100,000 payout float. Reset them at any time from the
-          dashboard. They are separate from your live balances.
-        </p>
-        <div className="callout">
-          <Icon name="info" size={16} />
-          <span>
-            Want to see a real prompt before going live? Amounts from KES 1 to 9 are free in live mode, so a KES 1 payment
-            to your own till costs nothing.
-          </span>
-        </div>
       </>
     ),
   },
@@ -326,7 +270,7 @@ export const DOCS: DocPage[] = [
       <>
         <div className="callout warn">
           <Icon name="shield" size={16} />
-          <span>Live payouts need a verified account. Test mode works straight away.</span>
+          <span>Payouts need a verified account and a funded payout float.</span>
         </div>
         <Endpoint method="POST" path="/v1/payouts" />
         <Params

@@ -11,7 +11,7 @@ export type Ctx = { app: App; api: FastifyInstance; mails: { to: string; subject
 export async function boot(env: Record<string, string> = {}): Promise<Ctx> {
   const mails: Ctx["mails"] = [];
   const sms: Ctx["sms"] = [];
-  const cfg = loadConfig({ NODE_ENV: "test", SANDBOX_DELAY_MS: "40", ALLOW_PRIVATE_WEBHOOKS: "true", ADMIN_TOKEN: "admin-token-for-tests", ...env });
+  const cfg = loadConfig({ NODE_ENV: "test", VERIFICATION_CODES: "on", SANDBOX_DELAY_MS: "40", ALLOW_PRIVATE_WEBHOOKS: "true", ADMIN_TOKEN: "admin-token-for-tests", ...env });
   const app = await createApp({
     cfg,
     db: await pgliteDb(),
@@ -49,8 +49,8 @@ export async function merchant(c: Ctx, email = `dev${Math.random().toString(36).
   if (p.statusCode !== 200) throw new Error(`verify phone failed ${p.body}`);
   const v = await dash("POST", "/app/auth/verify-email", { code: mailCode(c, email) });
   if (v.statusCode !== 200) throw new Error(`verify email failed ${v.body}`);
-  const keys = (await dash("GET", "/app/keys")).json() as { secret: string; mode: string }[];
-  const key = keys.find((k) => k.mode === "test")!.secret;
+  // The dashboard has no sandbox; the suite still drives the API through a test key.
+  const key = ((await dash("POST", "/app/keys", { name: "suite", mode: "test", scopes: ["payments:write", "payouts:write", "read"] })).json() as { secret: string }).secret;
   const api = (method: string, url: string, payload?: unknown, headers: Record<string, string> = {}) =>
     c.api.inject({ method: method as never, url, payload: payload as never, headers: { authorization: `Bearer ${key}`, ...headers } });
   const me = (await dash("GET", "/app/me")).json() as { merchant: { id: string } };

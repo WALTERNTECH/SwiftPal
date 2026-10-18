@@ -3,7 +3,7 @@ import { SITE } from "./site";
 
 const API = SITE.apiBase;
 
-export function stkSnippets(key = "sp_test_YOUR_SECRET_KEY", phone = "254712345678", amount = 1250): CodeTab[] {
+export function stkSnippets(key = "sp_live_YOUR_SECRET_KEY", phone = "254712345678", amount = 1250): CodeTab[] {
   return [
     {
       label: "cURL",
@@ -101,7 +101,7 @@ export const WEBHOOK_EVENT = `{
   }
 }`;
 
-export function payoutSnippets(key = "sp_test_YOUR_SECRET_KEY"): CodeTab[] {
+export function payoutSnippets(key = "sp_live_YOUR_SECRET_KEY"): CodeTab[] {
   return [
     {
       label: "cURL",
@@ -188,3 +188,36 @@ def verify(raw_body: bytes, header: str, secret: str) -> bool:
 }`,
   },
 ];
+
+/**
+ * A complete brief for an AI coding assistant: paste it into Cursor, Claude
+ * Code or Copilot and it has everything needed to wire SwiftPal in correctly.
+ */
+export const AI_PROMPT = `Integrate SwiftPal M-Pesa payments into this project.
+
+API base URL: ${API}
+Authentication: send "Authorization: Bearer <key>" on every request. Read the key from an environment variable named SWIFTPAL_SECRET_KEY. Use it only on the server; never ship it to a browser or mobile app and never commit it.
+Send "Idempotency-Key: <unique id per order or payout>" on every POST so a retry never charges or pays twice.
+Amounts are whole Kenyan shillings (integers). Phone numbers: 2547XXXXXXXX or 2541XXXXXXXX (07..., 01... and +254... are accepted too).
+
+1. Collect a payment (M-Pesa STK Push): POST /stk-push
+   Body: { "phone": "2547XXXXXXXX", "amount": 100, "reference": "ORDER-123" }
+   reference is at most 12 characters. Optional: "description" (at most 13 characters), "metadata" (flat object).
+   Returns 201 { "id": "pay_...", "status": "pending", ... } and the customer gets a PIN prompt on their phone.
+2. Check a payment: GET /stk-push/{id}
+   status is pending, succeeded, failed, cancelled or expired. mpesa_receipt is set when it succeeds.
+3. Send money (B2C payout): POST /payouts
+   Body: { "phone": "2547XXXXXXXX", "amount": 500, "reference": "PAYOUT-1", "reason": "withdrawal" }
+   amount 10 to 250,000. reason is one of salary, withdrawal, refund, commission, promotion, other.
+   Check it with GET /payouts/{id}: processing, succeeded, failed or reversed.
+4. Balances: GET /balance returns fee_credit and payout_float, each with available and held.
+
+Webhooks (set the URL in the SwiftPal dashboard under Developers > Webhooks):
+- SwiftPal POSTs JSON: { "id": "evt_...", "type": "payment.succeeded", "created_at": "...", "livemode": true, "data": { ...the payment or payout } }.
+- Types: payment.succeeded, payment.failed, payment.cancelled, payment.expired, payout.succeeded, payout.failed, payout.reversed, wallet.topped_up, wallet.low_balance.
+- Verify every request before trusting it. Header "SwiftPal-Signature: t=<unix seconds>,v1=<hex>". Compute HMAC-SHA256 over "<t>.<raw request body>" with the endpoint's signing secret (environment variable SWIFTPAL_WEBHOOK_SECRET), compare with v1 in constant time, and reject if t is more than 5 minutes old. Use the raw body bytes, not re-serialised JSON.
+- Reply 2xx quickly, then process. Handle each event id once; SwiftPal retries failed deliveries.
+- Mark an order paid only from a verified payment.succeeded webhook or GET /stk-push/{id} returning succeeded, never from anything the browser says.
+
+Errors: non-2xx responses are { "error": { "type", "code", "message", "doc_url" } }. Retry 5xx responses with the same Idempotency-Key; don't retry 4xx.
+Docs: ${SITE.url}/docs`;

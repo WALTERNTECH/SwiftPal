@@ -30,13 +30,6 @@
 .side-org-av { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--ink); color: var(--on-ink); font-size: 11.5px; font-weight: 700; flex-shrink: 0; letter-spacing: 0.02em; }
 .side-org b { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .side-org span { display: block; font-size: 11.5px; color: var(--ink-3); }
-.mode-seg { position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 3px; border-radius: 10px; background: var(--sunken); border: 1px solid var(--line); }
-.mode-seg button { position: relative; z-index: 1; height: 28px; border: 0; background: none; border-radius: 7px; font-size: 12.5px; font-weight: 600; color: var(--ink-3); cursor: pointer; transition: color 0.25s; }
-.mode-seg button[aria-pressed="true"].t { color: #fff; }
-.mode-seg button[aria-pressed="true"].l { color: var(--on-pine); }
-.mode-thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); border-radius: 7px; transition: transform 0.45s var(--ease), background-color 0.3s; box-shadow: var(--shadow-1); }
-.mode-thumb.test { background: #d38a1c; }
-.mode-thumb.live { transform: translateX(100%); background: var(--pine); }
 
 .side-nav { position: relative; flex: 1; overflow-y: auto; padding: 4px 8px 12px; display: grid; gap: 14px; align-content: start; }
 .side-group { display: grid; gap: 1px; }
@@ -66,14 +59,10 @@
 .ring { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; background: var(--warn-wash); color: var(--warn); box-shadow: 0 0 0 1px var(--warn-line); }
 .ring.submitted { background: var(--info-wash); color: var(--info); box-shadow: 0 0 0 1px var(--info-line); }
 .side-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.side-reset { border: 0; background: none; padding: 0; font-size: 11px; color: var(--ink-4); cursor: pointer; font-family: var(--font-mono); }
-.side-reset:hover { color: var(--bad); }
 .side-scrim { display: none; }
 
 /* ---------- top ---------- */
 .dash-main { min-width: 0; display: flex; flex-direction: column; position: relative; }
-.test-strip { display: flex; align-items: center; justify-content: center; gap: 8px; height: 26px; background: var(--test-bg); color: var(--test-fg); border-bottom: 1px solid var(--test-line); font-size: 11.5px; }
-.test-strip span { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; background: #d38a1c; color: #fff; padding: 2px 6px; border-radius: 4px; }
 .topbar { position: sticky; top: 0; z-index: 25; display: flex; align-items: center; gap: 16px; height: 58px; padding: 0 28px; border-bottom: 1px solid var(--line); background: var(--header-bg); backdrop-filter: blur(16px) saturate(1.4); -webkit-backdrop-filter: blur(16px) saturate(1.4); }
 .icon-btn.topbar-menu { display: none; }
 .crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; }
@@ -486,3 +475,16 @@ a.setup-item:hover { background: var(--sunken); }
   .new-btn { width: 34px; padding: 0; justify-content: center; font-size: 0; gap: 0; }
   .pop.wide { width: calc(100vw - 28px); right: -44px; }
 }
+
+/* ---------- integrate ---------- */
+.ai-prompt { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--sunken); }
+.ai-prompt-ic { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); color: var(--pine-ink); }
+.ai-prompt b { display: block; font-size: 14px; font-weight: 600; }
+.ai-prompt .muted { font-size: 13px; }
+@media (max-width: 560px) { .ai-prompt { flex-wrap: wrap; } .ai-prompt .btn { width: 100%; } }
+
+/* ---------- setup steps ---------- */
+.setup-item .setup-sub { font-size: 12px; color: var(--ink-4); }
+.setup-item.locked { opacity: 0.55; pointer-events: none; }
+button.setup-item { width: 100%; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.bal-chip.off i { background: var(--ink-4); }

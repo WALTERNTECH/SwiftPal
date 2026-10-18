@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/Icon";
 import { maskPhone, money } from "@/lib/format";
-import { setMode, useMode, usePayments } from "@/lib/api";
+import { useMode, usePayments } from "@/lib/api";
 import { useActions, type Action } from "./actions";
 import { ALL_ITEMS } from "./nav";
 
@@ -31,20 +31,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const rows = useMemo<Row[]>(() => {
     const act = (a: Action) => () => openAction(a);
     const all: Row[] = [
-      { id: "a-pay", group: "Actions", label: mode === "test" ? "Send test STK Push" : "Request payment", icon: "collect", run: act("payment"), keywords: "stk new charge" },
+      { id: "a-pay", group: "Actions", label: "Request payment", icon: "collect", run: act("payment"), keywords: "stk new charge" },
       { id: "a-po", group: "Actions", label: "Send payout", icon: "payout", run: act("payout"), keywords: "b2c disburse" },
       { id: "a-tf", group: "Actions", label: "Top up fee credit", icon: "plus", run: act("topup-fee"), keywords: "fund wallet" },
       { id: "a-tp", group: "Actions", label: "Top up payout float", icon: "plus", run: act("topup-float"), keywords: "fund wallet" },
       { id: "a-ch", group: "Actions", label: "Add Till or Paybill", icon: "channel", run: act("channel"), keywords: "channel shortcode" },
       { id: "a-key", group: "Actions", label: "Create API key", icon: "key", run: act("key"), keywords: "secret" },
-      {
-        id: "a-mode",
-        group: "Actions",
-        label: mode === "test" ? "Switch to live mode" : "Switch to test mode",
-        icon: "sandbox",
-        run: () => setMode(mode === "test" ? "live" : "test"),
-        keywords: "sandbox live test toggle",
-      },
       ...ALL_ITEMS.map((i) => ({
         id: i.href,
         group: "Go to",
