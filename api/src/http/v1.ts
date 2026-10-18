@@ -53,6 +53,7 @@ export function v1Routes(api: FastifyInstance, app: App) {
       if (!found) throw new ApiError(401, "invalid_api_key", "Missing or invalid API key. Send Authorization: Bearer sp_test_… or sp_live_…", "authentication_error");
       if (found.key.ip_allowlist.length && !found.key.ip_allowlist.includes(req.ip))
         throw new ApiError(403, "ip_not_allowed", `This key only accepts requests from its IP allowlist (got ${req.ip}).`, "permission_error");
+      if (found.merchant.suspended_at) throw new ApiError(403, "account_suspended", "This account is suspended. Contact SwiftPal support.", "permission_error");
       req.key = found.key;
       req.merchant = found.merchant;
       req.mode = found.key.mode;

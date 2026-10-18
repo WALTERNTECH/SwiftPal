@@ -34,7 +34,7 @@ export default function Overview() {
   // In order: each step opens once the one before it is done.
   const setup: { t: string; sub?: string; done: boolean; locked?: boolean; href?: string; act?: () => void }[] = [
     { t: "Business details", done: !!me.merchant.industry, href: "/dashboard/settings?tab=business" },
-    { t: "Verify your identity", sub: vs === "submitted" ? "In review" : vs === "rejected" ? "Needs changes" : undefined, done: approved, href: "/dashboard/verification" },
+    { t: "Verify your identity", sub: vs === "submitted" ? "Under review" : vs === "rejected" ? "Unsuccessful" : undefined, done: approved, href: "/dashboard/verification" },
     { t: "Add your Till or Paybill", done: hasChannel, locked: !approved, act: () => open("channel") },
     { t: "Create an API key", done: keys.some((k) => k.mode === "live"), locked: !approved, href: "/dashboard/developers" },
     { t: "Add a webhook", done: hooks.length > 0, locked: !approved, href: "/dashboard/developers/webhooks" },

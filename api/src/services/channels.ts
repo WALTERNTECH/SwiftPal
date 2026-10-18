@@ -1,7 +1,7 @@
 import type { App } from "../app.js";
 import { one } from "../db.js";
 import { ApiError, open, seal } from "../lib.js";
-import type { Merchant } from "./accounts.js";
+import { assertActive, type Merchant } from "./accounts.js";
 
 export type Channel = {
   id: string;
@@ -44,6 +44,7 @@ export async function addChannel(
   merchant: Merchant,
   input: { kind: "till" | "paybill"; shortcode: string; accountNumber?: string; displayName: string; businessShortcode?: string; passkey?: string },
 ) {
+  assertActive(merchant);
   if (merchant.verification_status !== "approved")
     throw new ApiError(403, "verification_required", "Tills and Paybills open once your account is verified.", "permission_error");
   if (!/^\d{5,7}$/.test(input.shortcode)) throw new ApiError(400, "invalid_shortcode", "A till or paybill number is 5 to 7 digits.");

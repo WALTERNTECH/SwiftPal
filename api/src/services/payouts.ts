@@ -3,7 +3,7 @@ import { one, type Q } from "../db.js";
 import { ApiError, kes, newId } from "../lib.js";
 import { MpesaRejected, type B2cRequest, type B2cResult } from "../mpesa/types.js";
 import { b2cFeeCents } from "../pricing.js";
-import type { Merchant } from "./accounts.js";
+import { assertActive, type Merchant } from "./accounts.js";
 import { emit } from "./events.js";
 import { capture, feeSource, hold, lock, release } from "./wallet.js";
 import { lowBalanceCheck } from "./payments.js";
@@ -60,6 +60,7 @@ export const presentPayout = (p: Payout) => ({
 export type PayoutInput = { phone: string; amount: number; reference: string; reason: string; metadata?: Record<string, unknown> };
 
 function guard(merchant: Merchant, mode: Mode, purpose: Payout["purpose"]) {
+  assertActive(merchant);
   if (mode === "live" && purpose === "payout" && merchant.verification_status !== "approved")
     throw new ApiError(403, "payouts_not_enabled", "B2C needs a verified account. Complete Verification in the dashboard.", "permission_error");
 }
@@ -159,7 +160,7 @@ export async function handleB2cResult(app: App, r: B2cResult, kind: "result" | "
 }
 
 /** Delivered: amount and fee leave. Failed: both go back. Exactly once. */
-async function settle(app: App, payoutId: string, o: { ok: boolean; code?: string; message?: string; receipt?: string; name?: string }) {
+export async function settle(app: App, payoutId: string, o: { ok: boolean; code?: string; message?: string; receipt?: string; name?: string }) {
   return app.db.tx(async (q) => {
     const p = await one<Payout>(q, `select * from payouts where id = $1 for update`, [payoutId]);
     if (!p || TERMINAL.has(p.status)) return p;

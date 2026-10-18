@@ -82,9 +82,9 @@ function Shell({ children }: { children: ReactNode }) {
 
 const VERIFY: Record<string, { label: string; tone: string }> = {
   not_started: { label: "Required", tone: "warn" },
-  submitted: { label: "In review", tone: "info" },
+  submitted: { label: "Under review", tone: "info" },
   approved: { label: "Verified", tone: "ok" },
-  rejected: { label: "Action needed", tone: "bad" },
+  rejected: { label: "Unsuccessful", tone: "bad" },
 };
 
 function Sidebar({ open }: { open: boolean }) {
@@ -127,10 +127,17 @@ function Sidebar({ open }: { open: boolean }) {
           </span>
         </Link>
         <div className="side-org">
-          <span className="side-org-av">{initials || "SP"}</span>
+          <span className="monogram">{initials || "SP"}</span>
           <div className="grow">
             <b>{me.merchant.name}</b>
-            <span>{me.merchant.type === "individual" ? "Individual" : me.merchant.type === "ngo" ? "Organisation" : "Business"}</span>
+            <span className="side-org-sub">
+              {vs === "approved" && (
+                <span className="tick" aria-label="Verified">
+                  <Icon name="check" size={9} strokeWidth={3} />
+                </span>
+              )}
+              {me.merchant.type === "individual" ? "Individual" : me.merchant.type === "ngo" ? "Organisation" : "Business"}
+            </span>
           </div>
         </div>
       </div>
@@ -158,8 +165,8 @@ function Sidebar({ open }: { open: boolean }) {
               <Icon name={vs === "submitted" ? "clock" : "idcard"} size={15} />
             </span>
             <span className="grow">
-              <b>{vs === "submitted" ? "Verification in review" : vs === "rejected" ? "Resubmit verification" : "Verify your account"}</b>
-              <span>{vs === "submitted" ? "We're reviewing your documents" : vs === "rejected" ? "See what needs changing" : "National ID and selfie"}</span>
+              <b>{vs === "submitted" ? "Verification under review" : vs === "rejected" ? "Verification unsuccessful" : "Complete verification"}</b>
+              <span>{vs === "submitted" ? "Documents submitted" : vs === "rejected" ? "Resubmit your documents" : "Required to go live"}</span>
             </span>
             <Icon name="chevronRight" size={14} />
           </Link>
@@ -204,7 +211,7 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
     const out: { icon: IconName; tone: string; text: string; at: string; href: string }[] = [];
     const fee = me.balances[mode].fee_credit.available;
     if (fee < me.merchant.low_balance_at) out.push({ icon: "alert", tone: "warn", text: `Fee credit is ${money(Math.floor(fee))}`, at: new Date().toISOString(), href: "/dashboard/wallet" });
-    if (me.merchant.verification_status === "not_started") out.push({ icon: "idcard", tone: "warn", text: "Verify your account to enable live payouts", at: me.user.created_at, href: "/dashboard/verification" });
+    if (me.merchant.verification_status === "not_started") out.push({ icon: "idcard", tone: "warn", text: "Complete verification to go live", at: me.user.created_at, href: "/dashboard/verification" });
     if (me.merchant.verification_status === "rejected") out.push({ icon: "idcard", tone: "bad", text: "Your verification needs changes", at: me.verification?.reviewed_at ?? me.user.created_at, href: "/dashboard/verification" });
     (payouts ?? [])
       .filter((p) => p.status === "failed")
@@ -274,7 +281,7 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
 
         <div className="pop-wrap">
           <button className="avatar-btn" onClick={() => setMenu(menu === "me" ? null : "me")} aria-label="Account" aria-expanded={menu === "me"}>
-            {initials}
+            <span className="monogram">{initials}</span>
           </button>
           {menu === "me" && (
             <div className="pop" role="menu">

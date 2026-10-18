@@ -7,7 +7,7 @@ M-Pesa, programmable. STK Push collections into the merchant's own Paybill or Ti
 ```
 web/     Marketing site, docs, sign-up/onboarding and the merchant dashboard (Next.js)
 api/     Payments API: accounts, keys, wallet ledger, STK Push, B2C, webhooks, verification, Daraja (Fastify)
-admin/   (phase 3) SwiftPal operations console
+admin/   Operations console: KYC review, merchants, manual reconciliation, audit log (Next.js, own service)
 ```
 
 ## API (`api/`)
@@ -17,7 +17,8 @@ admin/   (phase 3) SwiftPal operations console
 | `/v1/*` | `Authorization: Bearer sp_test_…` / `sp_live_…` (Basic with the key as username also works) | `stk-push`, `payments`, `payouts`, `payouts/batches`, `balance`, `events` |
 | `/app/*` | `sp_session` httpOnly cookie + `X-Requested-With: SwiftPal` | Everything the dashboard does |
 | `/callbacks/daraja/{stk,b2c-result,b2c-timeout}/:token` | secret path token | Safaricom results |
-| `/admin/*` | `Bearer ADMIN_TOKEN` | Verification review until the admin console exists |
+| `/connect/{start,token}` | none (device code) | An AI assistant asks for a key; the merchant approves at `/connect` in the dashboard |
+| `/admin/*` | `sp_admin` cookie (password + TOTP) through the admin gateway, or `Bearer ADMIN_TOKEN` | The operations console |
 
 How money moves:
 
@@ -57,4 +58,4 @@ npm run dev        # http://localhost:3000
 
 ## Deploy
 
-Render: `swiftpal-web` (build `cd web && npm ci && npm run build`) and `swiftpal-api` (build `cd api && npm ci --include=dev && npm run build`, start `cd api && npm start`). Pushes do not auto-deploy; trigger from Render.
+Render: `swiftpal-web` (build `cd web && npm ci && npm run build`), `swiftpal-api` (build `cd api && npm ci --include=dev && npm run build`, start `cd api && npm start`) and `swiftpal-admin` (build `cd admin && npm ci && npm run build`, start `cd admin && npm start`). The admin console is its own service on its own URL, linked from nowhere; it forwards only `/admin/*` to the API with `ADMIN_GATEWAY_SECRET`, which both services share. The first owner signs up at `/setup` with `ADMIN_TOKEN` as the setup key. Pushes do not auto-deploy; trigger from Render.

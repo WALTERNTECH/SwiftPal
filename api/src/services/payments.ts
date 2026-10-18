@@ -4,7 +4,7 @@ import { ApiError, kes, newId } from "../lib.js";
 import { stkOutcome } from "../mpesa/callbacks.js";
 import { MpesaRejected, type StkResult } from "../mpesa/types.js";
 import { stkFeeCents } from "../pricing.js";
-import type { Merchant } from "./accounts.js";
+import { assertActive, type Merchant } from "./accounts.js";
 import { sandboxChannel, stkTarget, type Channel } from "./channels.js";
 import { emit } from "./events.js";
 import { capture, credit, feeSource, hold, lock, read, release } from "./wallet.js";
@@ -71,6 +71,7 @@ export async function createStk(
   opts: { purpose?: Payment["purpose"]; channel?: Channel; topupAccount?: Account } = {},
 ): Promise<Payment> {
   const purpose = opts.purpose ?? "charge";
+  assertActive(merchant);
   const driver = driverFor(app, mode);
   if (!driver) throw new ApiError(503, "live_not_configured", "Live M-Pesa is not configured on this server yet.", "api_error");
   if (mode === "live" && purpose === "charge" && !merchant.live_enabled)

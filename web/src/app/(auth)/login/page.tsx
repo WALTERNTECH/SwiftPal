@@ -22,7 +22,10 @@ export default function Login() {
 
   async function finish() {
     const me = await api<Me>("/app/me");
-    router.push(nextStep(me));
+    // Back to where sign-in was asked for (e.g. approving an assistant), same-site paths only.
+    const next = new URLSearchParams(window.location.search).get("next");
+    const step = nextStep(me);
+    router.push(next && next.startsWith("/") && !next.startsWith("//") && step === "/dashboard" ? next : step);
   }
 
   async function submit(e: React.FormEvent) {

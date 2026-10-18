@@ -16,6 +16,8 @@ export type Config = {
   /** Shared secret in Daraja callback paths. Safaricom signs nothing, so the path is the gate. */
   callbackToken: string;
   adminToken: string | null;
+  /** Shared with the admin console's server; admin routes refuse browser sessions that didn't come through it. */
+  adminGateway: string | null;
   resendApiKey: string | null;
   mailFrom: string;
   /**
@@ -67,6 +69,7 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
     masterKey: key(e.MASTER_KEY, env),
     callbackToken: e.CALLBACK_TOKEN ?? (env === "production" ? "" : "dev-callback-token"),
     adminToken: e.ADMIN_TOKEN ?? null,
+    adminGateway: e.ADMIN_GATEWAY_SECRET || null,
     resendApiKey: e.RESEND_API_KEY ?? null,
     mailFrom: e.MAIL_FROM ?? "SwiftPal <onboarding@resend.dev>",
     codes: e.VERIFICATION_CODES === "on",

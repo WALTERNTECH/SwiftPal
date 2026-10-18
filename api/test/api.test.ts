@@ -419,6 +419,37 @@ describe("channels", () => {
   });
 });
 
+describe("connect", () => {
+  it("hands an assistant a live key once the owner approves, exactly once", async () => {
+    const m = await merchant(c);
+    const started = await c.api.inject({ method: "POST", url: "/connect/start", payload: { client_name: "Claude Code" } });
+    assert.equal(started.statusCode, 201);
+    const s = started.json();
+    assert.match(s.user_code, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    assert.match(s.approve_url, new RegExp(`/connect\\?code=${s.user_code}$`));
+    const poll = () => c.api.inject({ method: "POST", url: "/connect/token", payload: { device_code: s.device_code } });
+    assert.equal((await poll()).statusCode, 202, "still waiting");
+    assert.equal((await m.dash("GET", `/app/connect/${s.user_code}`)).json().client_name, "Claude Code");
+    assert.equal((await m.dash("POST", `/app/connect/${s.user_code}/approve`, {})).json().error.code, "account_not_live", "unverified accounts can't hand out keys");
+    await approve(m);
+    assert.equal((await m.dash("POST", `/app/connect/${s.user_code}/approve`, {})).statusCode, 200);
+    const got = await poll();
+    assert.equal(got.statusCode, 200);
+    assert.match(got.json().secret_key, /^sp_live_/);
+    const keys = (await m.dash("GET", "/app/keys")).json() as { name: string; mode: string }[];
+    assert.ok(keys.some((k) => k.mode === "live" && k.name === "Claude Code (connected)"));
+    assert.equal((await poll()).json().error.code, "already_claimed");
+  });
+
+  it("tells the assistant when the owner says no", async () => {
+    const m = await merchant(c);
+    const s = (await c.api.inject({ method: "POST", url: "/connect/start", payload: {} })).json();
+    await m.dash("POST", `/app/connect/${s.user_code}/deny`);
+    const r = await c.api.inject({ method: "POST", url: "/connect/token", payload: { device_code: s.device_code } });
+    assert.equal(r.json().error.code, "access_denied");
+  });
+});
+
 describe("verification", () => {
   it("takes ID front, back and a selfie, and an admin approves it", async () => {
     const m = await merchant(c);

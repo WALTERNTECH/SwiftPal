@@ -1,8 +1,10 @@
 import multipart from "@fastify/multipart";
 import Fastify from "fastify";
 import type { App } from "./app.js";
-import { adminRoutes, callbackRoutes } from "./http/callbacks.js";
+import { adminRoutes } from "./http/admin.js";
+import { callbackRoutes } from "./http/callbacks.js";
 import { errorBody } from "./http/common.js";
+import { connectRoutes } from "./http/connect.js";
 import { dashboardRoutes } from "./http/dashboard.js";
 import { v1Routes } from "./http/v1.js";
 import { ApiError, newId } from "./lib.js";
@@ -38,6 +40,7 @@ export async function buildServer(app: App) {
 
   api.get("/health", async () => ({ ok: true, live: !!app.mpesa.live }));
   v1Routes(api, app);
+  connectRoutes(api, app);
   dashboardRoutes(api, app);
   callbackRoutes(api, app);
   adminRoutes(api, app);

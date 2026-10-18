@@ -6,6 +6,7 @@ import * as accounts from "../services/accounts.js";
 import type { User } from "../services/accounts.js";
 import { analytics } from "../services/analytics.js";
 import * as channels from "../services/channels.js";
+import * as connect from "../services/connect.js";
 import { createStk, createTopup, getPayment, listPayments, presentPayment } from "../services/payments.js";
 import * as otp from "../services/otp.js";
 import { createBatch, createPayout, listPayouts, presentPayout, REASONS } from "../services/payouts.js";
@@ -242,6 +243,17 @@ export function dashboardRoutes(api: FastifyInstance, app: App) {
         });
         s.delete("/channels/:id", async (req) => {
           await channels.removeChannel(app, req.user!.merchant_id, (req.params as { id: string }).id);
+          return { ok: true };
+        });
+
+        // ---------- connecting an assistant or CLI ----------
+        s.get("/connect/:code", async (req) => connect.describe(app, (req.params as { code: string }).code));
+        s.post("/connect/:code/approve", async (req) => {
+          const b = parse(z.object({ scopes: z.array(z.string()).min(1).default(["payments:write", "payouts:write", "read"]) }), req.body ?? {});
+          return connect.approve(app, req.user!.merchant_id, (req.params as { code: string }).code, b.scopes);
+        });
+        s.post("/connect/:code/deny", async (req) => {
+          await connect.deny(app, (req.params as { code: string }).code);
           return { ok: true };
         });
 

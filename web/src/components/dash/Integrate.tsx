@@ -4,12 +4,20 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
+import { SITE } from "@/lib/site";
 import { AI_PROMPT, payoutSnippets, stkSnippets } from "@/lib/snippets";
+
+const INSTRUCTION = `Add M-Pesa payments with SwiftPal: ${SITE.url}/llms.txt`;
 
 /** Copy-paste code for people who write it, and a full brief for people who prompt an assistant. */
 export function Integrate() {
   const [what, setWhat] = useState<"collect" | "payout">("collect");
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"line" | "full" | null>(null);
+  const copy = async (text: string, which: "line" | "full") => {
+    await navigator.clipboard?.writeText(text);
+    setCopied(which);
+    setTimeout(() => setCopied(null), 2000);
+  };
   const tabs = useMemo(() => (what === "collect" ? stkSnippets() : payoutSnippets()), [what]);
 
   return (
@@ -30,19 +38,19 @@ export function Integrate() {
             <Icon name="bolt" size={16} />
           </span>
           <div className="grow">
-            <b>Building with an AI assistant?</b>
-            <span className="muted">Paste this into Cursor, Claude Code or Copilot.</span>
+            <b>Let your AI assistant set it up</b>
+            <span className="muted">
+              Tell Claude, Cursor or Copilot: <span className="mono ai-line">{INSTRUCTION}</span>. It connects to your account and you approve it here.
+            </span>
           </div>
-          <button
-            className="btn btn-pine btn-sm"
-            onClick={async () => {
-              await navigator.clipboard?.writeText(AI_PROMPT);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            }}
-          >
-            <Icon name={copied ? "check" : "copy"} size={14} /> {copied ? "Copied" : "Copy prompt"}
-          </button>
+          <div className="ai-actions">
+            <button className="btn btn-pine btn-sm" onClick={() => copy(INSTRUCTION, "line")}>
+              <Icon name={copied === "line" ? "check" : "copy"} size={14} /> {copied === "line" ? "Copied" : "Copy"}
+            </button>
+            <button className="text-btn quiet" onClick={() => copy(AI_PROMPT, "full")}>
+              {copied === "full" ? "Full prompt copied" : "Copy full prompt"}
+            </button>
+          </div>
         </div>
       </div>
     </section>

@@ -91,7 +91,7 @@ export function VerificationWizard({ onSubmitted }: { onSubmitted?: () => void }
       }
       await api("/app/verification", { form });
       await invalidate("/app/me", "/app/verification");
-      toast("Submitted for review");
+      toast("Documents submitted for verification");
       onSubmitted?.();
     } catch (err) {
       setError((err as ApiError).message);

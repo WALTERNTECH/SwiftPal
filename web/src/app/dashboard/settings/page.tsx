@@ -248,7 +248,7 @@ function BusinessTab() {
 function VerifyCard() {
   const me = useAccount();
   const vs = me.merchant.verification_status;
-  const label = vs === "approved" ? "Verified" : vs === "submitted" ? "In review" : vs === "rejected" ? "Needs changes" : "Not verified";
+  const label = vs === "approved" ? "Verified" : vs === "submitted" ? "Under review" : vs === "rejected" ? "Unsuccessful" : "Not verified";
   const tone = vs === "approved" ? "ok" : vs === "submitted" ? "info" : vs === "rejected" ? "bad" : "warn";
   return (
     <Link href="/dashboard/verification" className="panel panel-body spread rise" style={{ alignItems: "center" }}>

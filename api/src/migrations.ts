@@ -328,4 +328,70 @@ create index otp_codes_user on otp_codes(user_id, purpose, created_at desc);
 update users set phone_verified_at = email_verified_at where email_verified_at is not null;
 `,
   },
+  {
+    id: "004_connect",
+    sql: `
+-- An assistant or CLI asking for an API key; the merchant approves it in the dashboard.
+create table connect_requests (
+  device_hash text primary key,
+  user_code text not null unique,
+  client_name text not null,
+  status text not null default 'pending' check (status in ('pending','approved','denied','claimed')),
+  merchant_id text references merchants(id),
+  secret_enc text,
+  ip text,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  approved_at timestamptz,
+  claimed_at timestamptz
+);
+create index connect_requests_ip on connect_requests(ip, created_at);
+`,
+  },
+  {
+    id: "005_admin",
+    sql: `
+create table admins (
+  id text primary key,
+  email text not null unique,
+  name text not null,
+  password_hash text not null,
+  role text not null default 'admin' check (role in ('owner','admin')),
+  totp_secret_enc text,
+  totp_enabled_at timestamptz,
+  totp_last_step bigint,
+  disabled_at timestamptz,
+  last_login_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table admin_sessions (
+  token_hash text primary key,
+  admin_id text not null references admins(id),
+  stage text not null check (stage in ('enroll','totp','full')),
+  ip text,
+  user_agent text,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+create index admin_sessions_admin on admin_sessions(admin_id);
+
+-- Every admin action: who, what, on which merchant, with before/after.
+create table admin_audit (
+  id bigint generated always as identity primary key,
+  admin_id text references admins(id),
+  action text not null,
+  target_type text,
+  target_id text,
+  detail jsonb not null default '{}',
+  ip text,
+  created_at timestamptz not null default now()
+);
+create index admin_audit_target on admin_audit(target_type, target_id, created_at desc);
+create index admin_audit_time on admin_audit(created_at desc);
+
+alter table merchants add column suspended_at timestamptz;
+alter table merchants add column suspended_reason text;
+`,
+  },
 ];

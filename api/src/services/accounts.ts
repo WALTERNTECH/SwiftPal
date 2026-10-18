@@ -19,8 +19,15 @@ export type Merchant = {
   starter_credit_given: boolean;
   onboarding_done: boolean;
   live_enabled: boolean;
+  suspended_at: string | null;
+  suspended_reason: string | null;
   created_at: string;
 };
+
+/** A suspended account keeps its data but can't move money or make keys. */
+export function assertActive(m: Pick<Merchant, "suspended_at">) {
+  if (m.suspended_at) throw new ApiError(403, "account_suspended", "This account is suspended. Contact SwiftPal support.", "permission_error");
+}
 
 export type User = {
   id: string;
@@ -347,7 +354,8 @@ export async function createKey(app: App, merchant: Merchant, mode: Mode, name: 
   if (!name.trim()) throw new ApiError(400, "invalid_name", "Give the key a name.");
   const bad = scopes.filter((s) => !(SCOPES as readonly string[]).includes(s));
   if (!scopes.length || bad.length) throw new ApiError(400, "invalid_scopes", `Scopes must be from ${SCOPES.join(", ")}.`);
-  if (mode === "live" && !merchant.live_enabled) throw new ApiError(403, "account_not_live", "Live keys are issued once a Till or Paybill is verified.", "permission_error");
+  assertActive(merchant);
+  if (mode === "live" && !merchant.live_enabled) throw new ApiError(403, "account_not_live", "API keys open once your account is verified.", "permission_error");
   if (mode === "live" && scopes.includes("payouts:write") && merchant.verification_status !== "approved")
     throw new ApiError(403, "payouts_not_enabled", "Live payouts need a verified account.", "permission_error");
   return app.db.tx((q) => insertKey(app, q, merchant.id, mode, name.trim(), scopes));

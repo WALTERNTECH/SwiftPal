@@ -111,11 +111,12 @@ export async function listForReview(app: App, status = "submitted") {
 }
 
 export async function reviewDetail(app: App, id: string) {
-  const v = await one<{ id: string; id_number_enc: string } & Record<string, unknown>>(app.db, `select * from verifications where id = $1`, [id]);
+  const v = await one<{ id: string; merchant_id: string; id_number_enc: string } & Record<string, unknown>>(app.db, `select * from verifications where id = $1`, [id]);
   if (!v) throw new ApiError(404, "not_found", "No such verification.", "not_found");
   const { rows } = await app.db.query(`select id, doc_key, filename, content_type, size_bytes from verification_files where verification_id = $1`, [id]);
   const { id_number_enc, ...rest } = v;
-  return { ...rest, id_number: open(app.cfg.masterKey, id_number_enc), documents: rows };
+  const owner = await one(app.db, `select m.name as merchant_name, m.type as merchant_type, u.email, u.phone, u.first_name, u.last_name from merchants m join users u on u.merchant_id = m.id and u.role = 'owner' where m.id = $1`, [v.merchant_id]);
+  return { ...rest, id_number: open(app.cfg.masterKey, id_number_enc), documents: rows, owner };
 }
 
 export async function reviewFile(app: App, fileId: string) {

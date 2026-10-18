@@ -66,6 +66,17 @@ export async function release(q: Q, merchantId: string, mode: Mode, account: Acc
   );
 }
 
+/** Taken straight from available, e.g. a manual correction. Refuses rather than go below zero. */
+export async function debit(q: Q, merchantId: string, mode: Mode, account: Account, cents: number, kind: string, ref: string | null) {
+  if (cents <= 0) return;
+  const { rows } = await q.query(
+    `update balances set available_cents = available_cents - $4 where merchant_id = $1 and mode = $2 and account = $3 and available_cents >= $4 returning available_cents`,
+    [merchantId, mode, account, cents],
+  );
+  if (!rows.length) throw new ApiError(409, "insufficient_balance", `The ${account === "fee" ? "fee credit" : "payout float"} has less than KES ${(cents / 100).toLocaleString()} available.`, "balance_error");
+  await ledger(q, merchantId, mode, account, kind, -cents, ref);
+}
+
 export async function credit(q: Q, merchantId: string, mode: Mode, account: Account, cents: number, kind: string, ref: string | null) {
   if (cents <= 0) return;
   await q.query(`update balances set available_cents = available_cents + $4 where merchant_id = $1 and mode = $2 and account = $3`, [merchantId, mode, account, cents]);

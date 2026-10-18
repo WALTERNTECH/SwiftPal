@@ -83,7 +83,7 @@ export default function Payouts() {
         <div className="callout warn rise">
           <Icon name="idcard" size={16} />
           <span className="grow">
-            <b>{vs === "submitted" ? "Verification in review." : "Live payouts need a verified account."}</b>
+            <b>{vs === "submitted" ? "Your verification is under review." : "Payouts open once your account is verified."}</b>
           </span>
           <Link href="/dashboard/verification" className="btn btn-line btn-sm">
             {vs === "submitted" ? "View status" : "Verify now"}

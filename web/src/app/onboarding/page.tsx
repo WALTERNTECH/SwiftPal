@@ -92,8 +92,8 @@ function DoneStep({ approved, onOpen }: { approved: boolean; onOpen: () => void 
           <Icon name={approved ? "check" : "clock"} size={22} strokeWidth={2.2} />
         </span>
         <div>
-          <h1>{approved ? "You're verified" : "Documents received"}</h1>
-          <p className="muted">{approved ? "Add your Till or Paybill to start receiving payments." : "Once they're approved, add your Till or Paybill and start receiving payments."}</p>
+          <h1>{approved ? "Account verified" : "Documents submitted"}</h1>
+          <p className="muted">{approved ? "Add your Till or Paybill to start receiving payments." : "Your verification is under review. Once it's approved, add your Till or Paybill to start receiving payments."}</p>
         </div>
       </div>
       <div className="onb-actions">

@@ -4,7 +4,6 @@ import { ApiError, safeEqual } from "../lib.js";
 import { parseB2cResult, parseB2cTimeout, parseStkCallback } from "../mpesa/callbacks.js";
 import { handleStkResult } from "../services/payments.js";
 import { handleB2cResult } from "../services/payouts.js";
-import * as verification from "../services/verification.js";
 
 /**
  * Safaricom posts results here. It signs nothing, so the secret token in the
@@ -51,32 +50,3 @@ export function callbackRoutes(api: FastifyInstance, app: App) {
 }
 
 /** Review endpoints for the admin console, behind ADMIN_TOKEN until that console exists. */
-export function adminRoutes(api: FastifyInstance, app: App) {
-  api.register(
-    async (r) => {
-      r.addHook("onRequest", async (req) => {
-        const h = req.headers.authorization ?? "";
-        if (!app.cfg.adminToken || !h.startsWith("Bearer ") || !safeEqual(h.slice(7), app.cfg.adminToken))
-          throw new ApiError(401, "unauthorized", "Admin token required.", "authentication_error");
-      });
-      r.get("/verifications", async (req) => verification.listForReview(app, (req.query as { status?: string }).status ?? "submitted"));
-      r.get("/verifications/:id", async (req) => verification.reviewDetail(app, (req.params as { id: string }).id));
-      r.get("/files/:id", async (req, reply) => {
-        const f = await verification.reviewFile(app, (req.params as { id: string }).id);
-        return reply.header("Content-Type", f.contentType).header("Cache-Control", "private, no-store").header("Content-Disposition", `inline; filename="${f.filename.replace(/"/g, "")}"`).send(f.bytes);
-      });
-      r.post("/verifications/:id/approve", async (req) => verification.decide(app, (req.params as { id: string }).id, true));
-      r.post("/verifications/:id/reject", async (req) => verification.decide(app, (req.params as { id: string }).id, false, (req.body as { note?: string } | undefined)?.note));
-      r.get("/merchants", async () => {
-        const { rows } = await app.db.query(
-          `select m.id, m.name, m.type, m.verification_status, m.live_enabled, m.created_at, u.email,
-             (select available_cents from balances b where b.merchant_id = m.id and b.mode = 'live' and b.account = 'fee') as live_fee_cents,
-             (select available_cents from balances b where b.merchant_id = m.id and b.mode = 'live' and b.account = 'float') as live_float_cents
-           from merchants m join users u on u.merchant_id = m.id and u.role = 'owner' order by m.created_at desc limit 200`,
-        );
-        return rows;
-      });
-    },
-    { prefix: "/admin" },
-  );
-}
