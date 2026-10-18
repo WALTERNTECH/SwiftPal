@@ -24,6 +24,8 @@ API base URL: ${SITE.apiBase}
 
 2. Show the user approve_url and user_code. They open the link, sign in to SwiftPal, check the code matches, and click Approve.
    Their account must be verified; if it isn't, the page tells them.
+   The key can request payments and read data. Sending money (payouts:write) is off unless the user ticks it on that page,
+   which needs two-step verification on their account. If the project sends payouts, tell the user to tick "Send payouts".
 
 3. Poll every interval seconds:
    POST ${API_ORIGIN}/connect/token

@@ -1,6 +1,8 @@
 import type { IconName } from "@/components/Icon";
+import type { Perm } from "@/lib/api";
 
-export type NavItem = { href: string; label: string; icon: IconName; exact?: boolean; keywords?: string };
+/** `perm` hides an item from roles that can't use it; everything else is readable by the whole team. */
+export type NavItem = { href: string; label: string; icon: IconName; exact?: boolean; keywords?: string; perm?: Perm };
 export type NavGroup = { label?: string; items: NavItem[] };
 
 export const NAV: NavGroup[] = [
@@ -14,7 +16,8 @@ export const NAV: NavGroup[] = [
     label: "Money",
     items: [
       { href: "/dashboard/payments", label: "Payments", icon: "collect", keywords: "stk push collections transactions" },
-      { href: "/dashboard/payouts", label: "Payouts", icon: "payout", keywords: "b2c disbursements bulk" },
+      { href: "/dashboard/links", label: "Payment links", icon: "link", keywords: "pay page share whatsapp instagram no code checkout" },
+      { href: "/dashboard/payouts", label: "Payouts", icon: "payout", keywords: "b2c disbursements bulk refunds" },
       { href: "/dashboard/wallet", label: "Wallet", icon: "wallet", keywords: "balance fee credit float top up ledger" },
     ],
   },
@@ -29,13 +32,13 @@ export const NAV: NavGroup[] = [
   {
     label: "Developers",
     items: [
-      { href: "/dashboard/developers", label: "API keys", icon: "key", exact: true, keywords: "secret token" },
-      { href: "/dashboard/developers/webhooks", label: "Webhooks", icon: "webhook", keywords: "callbacks events" },
-      { href: "/dashboard/developers/logs", label: "Request logs", icon: "logs", keywords: "requests api calls" },
+      { href: "/dashboard/developers", label: "API keys", icon: "key", exact: true, keywords: "secret token", perm: "developers" },
+      { href: "/dashboard/developers/webhooks", label: "Webhooks", icon: "webhook", keywords: "callbacks events", perm: "developers" },
+      { href: "/dashboard/developers/logs", label: "Request logs", icon: "logs", keywords: "requests api calls", perm: "developers" },
     ],
   },
   {
-    items: [{ href: "/dashboard/settings", label: "Settings", icon: "settings", keywords: "profile business team" }],
+    items: [{ href: "/dashboard/settings", label: "Settings", icon: "settings", keywords: "profile business team security two-step 2fa password sessions" }],
   },
 ];
 

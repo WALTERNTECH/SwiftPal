@@ -18,6 +18,14 @@ export type Config = {
   adminToken: string | null;
   /** Shared with the admin console's server; admin routes refuse browser sessions that didn't come through it. */
   adminGateway: string | null;
+  /** Bearer ADMIN_TOKEN on /admin for scripts. Off in production unless ADMIN_API=on: it skips two-step sign-in. */
+  adminApi: boolean;
+  /** Shared with the web app's server, which passes the visitor's address in X-SwiftPal-Client-IP. */
+  proxySecret: string | null;
+  /** Safaricom's callback addresses. When set, Daraja callbacks from anywhere else are refused. */
+  callbackIps: string[];
+  /** Live payouts and withdrawals a merchant may send per Nairobi day, unless the console sets their own. */
+  payoutDailyLimitCents: number;
   resendApiKey: string | null;
   mailFrom: string;
   /**
@@ -70,6 +78,10 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
     callbackToken: e.CALLBACK_TOKEN ?? (env === "production" ? "" : "dev-callback-token"),
     adminToken: e.ADMIN_TOKEN ?? null,
     adminGateway: e.ADMIN_GATEWAY_SECRET || null,
+    adminApi: env !== "production" || e.ADMIN_API === "on",
+    proxySecret: e.WEB_PROXY_SECRET || null,
+    callbackIps: (e.DARAJA_CALLBACK_IPS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    payoutDailyLimitCents: Math.round(Number(e.PAYOUT_DAILY_LIMIT_KES ?? 500_000) * 100),
     resendApiKey: e.RESEND_API_KEY ?? null,
     mailFrom: e.MAIL_FROM ?? "SwiftPal <onboarding@resend.dev>",
     codes: e.VERIFICATION_CODES === "on",

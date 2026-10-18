@@ -1,5 +1,5 @@
-// Fee bands, in cents. Mirrors web/src/lib/pricing.ts; the admin console
-// will move these into the database.
+// Fee bands, in cents. Mirrors web/src/lib/pricing.ts. A merchant can have
+// negotiated prices, set from the console, which these helpers apply.
 
 type Band = { min: number; max: number; fee: number };
 
@@ -30,6 +30,22 @@ const find = (bands: Band[], amount: number) => bands.find((b) => amount >= b.mi
 
 export const stkFeeCents = (amount: number) => find(STK, amount);
 export const b2cFeeCents = (amount: number) => find(B2C, amount);
+
+type Negotiated = { stk_fee_cents?: number | null; b2c_fee_pct?: number | null };
+
+/** Prompts under KES 10 stay free whatever the deal. */
+export function stkFeeFor(m: Negotiated, amount: number) {
+  const base = stkFeeCents(amount);
+  if (base === null || base === 0 || m.stk_fee_cents === null || m.stk_fee_cents === undefined) return base;
+  return Number(m.stk_fee_cents);
+}
+
+/** b2c_fee_pct is the share of the standard band fee charged: 100 standard, 80 a fifth off. */
+export function b2cFeeFor(m: Negotiated, amount: number) {
+  const base = b2cFeeCents(amount);
+  if (base === null || m.b2c_fee_pct === null || m.b2c_fee_pct === undefined) return base;
+  return Math.round((base * Number(m.b2c_fee_pct)) / 100);
+}
 
 export const STARTER_CREDIT_CENTS = 5_000;
 export const TEST_FEE_CREDIT_CENTS = 1_000_000;

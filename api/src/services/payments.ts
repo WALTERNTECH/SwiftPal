@@ -3,8 +3,9 @@ import { one } from "../db.js";
 import { ApiError, kes, newId } from "../lib.js";
 import { stkOutcome } from "../mpesa/callbacks.js";
 import { MpesaRejected, type StkResult } from "../mpesa/types.js";
-import { stkFeeCents } from "../pricing.js";
+import { stkFeeFor } from "../pricing.js";
 import { assertActive, type Merchant } from "./accounts.js";
+import { assertPaymentsOpen } from "./platform.js";
 import { sandboxChannel, stkTarget, type Channel } from "./channels.js";
 import { emit } from "./events.js";
 import { capture, credit, feeSource, hold, lock, read, release } from "./wallet.js";
@@ -30,6 +31,7 @@ export type Payment = {
   merchant_request_id: string | null;
   checkout_request_id: string | null;
   metadata: Record<string, unknown>;
+  link_id: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -68,10 +70,11 @@ export async function createStk(
   merchant: Merchant,
   mode: Mode,
   input: StkInput,
-  opts: { purpose?: Payment["purpose"]; channel?: Channel; topupAccount?: Account } = {},
+  opts: { purpose?: Payment["purpose"]; channel?: Channel; topupAccount?: Account; linkId?: string } = {},
 ): Promise<Payment> {
   const purpose = opts.purpose ?? "charge";
   assertActive(merchant);
+  if (mode === "live") await assertPaymentsOpen(app);
   const driver = driverFor(app, mode);
   if (!driver) throw new ApiError(503, "live_not_configured", "Live M-Pesa is not configured on this server yet.", "api_error");
   if (mode === "live" && purpose === "charge" && !merchant.live_enabled)
@@ -91,7 +94,7 @@ export async function createStk(
     if (mode === "live" && channel.status !== "verified") throw new ApiError(422, "channel_unverified", "This channel hasn't completed its KES 1 verification.");
   }
 
-  const fee = purpose === "charge" ? stkFeeCents(input.amount) ?? 0 : 0;
+  const fee = purpose === "charge" ? stkFeeFor(merchant, input.amount) ?? 0 : 0;
   const id = newId("pay");
   await app.db.tx(async (q) => {
     let feeAccount: Account | null = null;
@@ -102,9 +105,9 @@ export async function createStk(
       if (feeAccount === "fee") await lowBalanceCheck(q, merchant.id, mode, b.fee.available);
     }
     await q.query(
-      `insert into payments (id, merchant_id, mode, purpose, channel_id, phone, amount, reference, description, fee_cents, fee_account, topup_account, metadata)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [id, merchant.id, mode, purpose, channel?.id ?? null, input.phone, input.amount, input.reference, input.description ?? null, fee, feeAccount, opts.topupAccount ?? null, JSON.stringify(input.metadata ?? {})],
+      `insert into payments (id, merchant_id, mode, purpose, channel_id, phone, amount, reference, description, fee_cents, fee_account, topup_account, metadata, link_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [id, merchant.id, mode, purpose, channel?.id ?? null, input.phone, input.amount, input.reference, input.description ?? null, fee, feeAccount, opts.topupAccount ?? null, JSON.stringify(input.metadata ?? {}), opts.linkId ?? null],
     );
   });
 

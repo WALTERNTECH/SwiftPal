@@ -74,6 +74,10 @@ const ACTIONS: Record<string, string> = {
   "payment.resolved_failed": "Closed a payment as failed",
   "payout.resolved_succeeded": "Confirmed a payout as delivered",
   "payout.resolved_failed": "Failed and refunded a payout",
+  "merchant.terms_changed": "Changed limits or pricing",
+  "merchant.signed_out": "Signed everyone out",
+  "merchant.2fa_reset": "Reset a merchant's two-step verification",
+  "platform.updated": "Changed a platform switch",
 };
 export const actionLabel = (a: string) => ACTIONS[a] ?? a;
 

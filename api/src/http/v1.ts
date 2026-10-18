@@ -5,9 +5,9 @@ import { one } from "../db.js";
 import { ApiError, sha256 } from "../lib.js";
 import { authenticateKey, type ApiKeyRow, type Merchant } from "../services/accounts.js";
 import { createStk, getPayment, listPayments, presentPayment } from "../services/payments.js";
-import { createBatch, createPayout, listPayouts, presentPayout, REASONS, type Payout } from "../services/payouts.js";
+import { createBatch, createPayout, listPayouts, presentPayout, REASONS, refundPayment, refundsOf, type Payout } from "../services/payouts.js";
 import { present, read } from "../services/wallet.js";
-import { metadata, parse, phone } from "./common.js";
+import { metadata, pageSize, parse, phone } from "./common.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -51,8 +51,8 @@ export function v1Routes(api: FastifyInstance, app: App) {
     r.addHook("onRequest", async (req, reply) => {
       const found = await authenticateKey(app, rawKey(req));
       if (!found) throw new ApiError(401, "invalid_api_key", "Missing or invalid API key. Send Authorization: Bearer sp_test_… or sp_live_…", "authentication_error");
-      if (found.key.ip_allowlist.length && !found.key.ip_allowlist.includes(req.ip))
-        throw new ApiError(403, "ip_not_allowed", `This key only accepts requests from its IP allowlist (got ${req.ip}).`, "permission_error");
+      if (found.key.ip_allowlist.length && !found.key.ip_allowlist.includes(req.clientIp))
+        throw new ApiError(403, "ip_not_allowed", `This key only accepts requests from its IP allowlist (got ${req.clientIp}).`, "permission_error");
       if (found.merchant.suspended_at) throw new ApiError(403, "account_suspended", "This account is suspended. Contact SwiftPal support.", "permission_error");
       req.key = found.key;
       req.merchant = found.merchant;
@@ -122,7 +122,7 @@ export function v1Routes(api: FastifyInstance, app: App) {
           req.url.split("?")[0],
           reply.statusCode,
           Math.round(reply.elapsedTime),
-          req.ip,
+          req.clientIp,
           req.body ? JSON.stringify(req.body).slice(0, 16_000) : null,
           resBody && resBody.length < 16_000 ? resBody : null,
         ])
@@ -154,8 +154,22 @@ export function v1Routes(api: FastifyInstance, app: App) {
     r.get("/payments", async (req) => {
       need(req, "read");
       const q = req.query as { status?: string; limit?: string; starting_after?: string };
-      const rows = await listPayments(app, req.merchant!.id, req.mode!, { status: q.status, limit: Number(q.limit ?? 25), before: q.starting_after });
-      return { object: "list", data: rows.map(presentPayment), has_more: rows.length === Number(q.limit ?? 25) };
+      const size = pageSize(q.limit, 25, 100);
+      const rows = await listPayments(app, req.merchant!.id, req.mode!, { status: q.status, limit: size, before: q.starting_after });
+      return { object: "list", data: rows.map(presentPayment), has_more: rows.length === size };
+    });
+
+    // Refunds go back to the paying phone from the payout float; partial refunds add up to the payment at most.
+    r.post("/payments/:id/refunds", async (req, reply) => {
+      need(req, "payouts:write");
+      const body = parse(z.object({ amount: z.number().int("must be whole shillings").min(10).max(250_000).optional() }), req.body ?? {});
+      const p = await refundPayment(app, req.merchant!, req.mode!, (req.params as { id: string }).id, body.amount);
+      return reply.code(201).send(presentPayout(p));
+    });
+
+    r.get("/payments/:id/refunds", async (req) => {
+      need(req, "read");
+      return { object: "list", data: await refundsOf(app, req.merchant!.id, (req.params as { id: string }).id) };
     });
 
     r.post("/payouts", async (req, reply) => {
@@ -205,7 +219,7 @@ export function v1Routes(api: FastifyInstance, app: App) {
         params.push(q.type);
         where += ` and type = $3`;
       }
-      params.push(Math.min(Number(q.limit ?? 25), 100));
+      params.push(pageSize(q.limit, 25, 100));
       const { rows } = await app.db.query(`select id, type, data, created_at from events where ${where} order by created_at desc limit $${params.length}`, params);
       return { object: "list", data: rows.map((e) => ({ ...e, livemode: req.mode === "live" })) };
     });

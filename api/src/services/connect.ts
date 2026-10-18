@@ -3,6 +3,7 @@ import type { App } from "../app.js";
 import { one } from "../db.js";
 import { ApiError, open, seal, sha256, token } from "../lib.js";
 import { assertActive, getMerchant, insertKey, SCOPES } from "./accounts.js";
+import { record, type Ctx } from "./security.js";
 
 // Connecting an AI assistant or CLI without copying a key: the tool starts a
 // request and shows the merchant a short code; the merchant approves it in the
@@ -20,6 +21,7 @@ type Request = {
   merchant_id: string | null;
   secret_enc: string | null;
   expired: boolean;
+  ip: string | null;
   created_at: string;
 };
 
@@ -52,18 +54,19 @@ export async function start(app: App, clientName: string | undefined, ip?: strin
 const byCode = (app: App, code: string) =>
   one<Request>(
     app.db,
-    `select device_hash, user_code, client_name, status, merchant_id, secret_enc, expires_at < now() as expired, created_at from connect_requests where user_code = $1`,
+    `select device_hash, user_code, client_name, status, merchant_id, secret_enc, ip, expires_at < now() as expired, created_at from connect_requests where user_code = $1`,
     [code.trim().toUpperCase()],
   );
 
 export async function describe(app: App, code: string) {
   const r = await byCode(app, code);
   if (!r) throw new ApiError(404, "not_found", "That connection code doesn't exist. Ask your assistant for a new one.", "not_found");
-  return { user_code: r.user_code, client_name: r.client_name, status: r.expired && r.status === "pending" ? "expired" : r.status, created_at: r.created_at };
+  // Where and when it was asked, so the person approving can tell it came from their own machine.
+  return { user_code: r.user_code, client_name: r.client_name, status: r.expired && r.status === "pending" ? "expired" : r.status, requested_from: r.ip, created_at: r.created_at };
 }
 
 /** The merchant says yes: a new live key is made and held, sealed, for the tool to collect once. */
-export async function approve(app: App, merchantId: string, code: string, scopes: string[]) {
+export async function approve(app: App, merchantId: string, userId: string, code: string, scopes: string[], ctx: Ctx) {
   const wanted = scopes.filter((s) => (SCOPES as readonly string[]).includes(s));
   if (!wanted.length) throw new ApiError(400, "invalid_scopes", "Choose at least one permission.");
   return app.db.tx(async (q) => {
@@ -82,6 +85,7 @@ export async function approve(app: App, merchantId: string, code: string, scopes
       merchantId,
       seal(app.cfg.masterKey, key.secret),
     ]);
+    await record(q, merchantId, userId, "connect_approved", { client: r.client_name, scopes: wanted, key: key.id, requested_from: r.ip }, ctx);
     return { client_name: r.client_name };
   });
 }

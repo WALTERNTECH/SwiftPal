@@ -5,11 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { kes } from "@/components/dash/charts";
-import { downloadCsv, Empty, Modal, PageHeader, PayoutBadge, useToast } from "@/components/dash/ui";
-import { api, invalidate, useAccount, useApi, useMode, usePaged, type ApiError, type Payout } from "@/lib/api";
+import { ExportButton } from "@/components/dash/ExportButton";
+import { Empty, Modal, PageHeader, PayoutBadge, useToast } from "@/components/dash/ui";
+import { api, can, invalidate, useAccount, useApi, useMode, usePaged, type ApiError, type Payout } from "@/lib/api";
 import { dateTime, maskPhone, money, normalisePhone } from "@/lib/format";
 import { b2cFee } from "@/lib/pricing";
-import { SmsConfirm } from "@/components/dash/SmsConfirm";
+import { ActionError, SmsConfirm, type Confirmation } from "@/components/dash/SmsConfirm";
 
 const PAGE = 20;
 const REASONS = ["salary", "withdrawal", "refund", "commission", "promotion", "other"];
@@ -23,7 +24,6 @@ export default function Payouts() {
   const [q, setQ] = useState("");
   const [needle, setNeedle] = useState("");
   const [watching, setWatching] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const vs = me.merchant.verification_status;
   const blocked = mode === "live" && vs !== "approved";
 
@@ -47,20 +47,7 @@ export default function Payouts() {
     was.current = processing;
   }, [processing]);
 
-  async function exportCsv() {
-    setExporting(true);
-    try {
-      const all = await api<Payout[]>(`/app/payouts?${params}&limit=200`);
-      downloadCsv(`swiftpal-payouts-${mode}.csv`, [
-        ["id", "created_at", "status", "amount", "fee", "phone", "recipient", "reference", "reason", "mpesa_receipt", "batch"],
-        ...all.map((p) => [p.id, p.created_at, p.status, p.amount, p.fee.amount, p.phone, p.recipient_name, p.reference, p.reason, p.mpesa_receipt, p.batch]),
-      ]);
-      if (all.length === 200) toast("Exported the latest 200 payouts");
-    } catch (err) {
-      toast((err as Error).message, "alert");
-    }
-    setExporting(false);
-  }
+  const sendsMoney = can(me, "money");
 
   return (
     <>
@@ -68,14 +55,16 @@ export default function Payouts() {
         title="Payouts"
         sub="B2C disbursements"
         actions={
-          <>
-            <button className="btn btn-line" disabled={blocked} onClick={() => setBulk(true)}>
-              <Icon name="upload" size={15} /> Bulk upload
-            </button>
-            <button className="btn btn-pine" disabled={blocked} onClick={() => open("payout")}>
-              <Icon name="plus" size={15} /> Send payout
-            </button>
-          </>
+          sendsMoney && (
+            <>
+              <button className="btn btn-line" disabled={blocked} onClick={() => setBulk(true)}>
+                <Icon name="upload" size={15} /> Bulk upload
+              </button>
+              <button className="btn btn-pine" disabled={blocked} onClick={() => open("payout")}>
+                <Icon name="plus" size={15} /> Send payout
+              </button>
+            </>
+          )
         }
       />
 
@@ -96,6 +85,11 @@ export default function Payouts() {
         <div><dt>Sent</dt><dd>{summary ? summary.sent : "—"}</dd></div>
         <div><dt>Total paid out</dt><dd>{summary ? kes(summary.paid_out) : "—"}</dd></div>
         <div><dt>Failed · refunded</dt><dd>{summary ? summary.failed : "—"}</dd></div>
+        <div title="Live payouts, refunds and withdrawals per day. Contact support to raise it.">
+          <dt>Daily limit</dt>
+          <dd>{kes(me.limits.payout_daily)}</dd>
+          <span className="sub">{kes(me.limits.sent_today)} used today</span>
+        </div>
       </dl>
 
       <section className="panel rise" style={{ ["--d" as string]: "60ms" }}>
@@ -105,9 +99,7 @@ export default function Payouts() {
             <input className="input" placeholder="Phone, name, reference or receipt" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search payouts" />
           </div>
           <div className="grow" />
-          <button className="btn btn-ghost btn-sm" disabled={!rows.length || exporting} onClick={exportCsv}>
-            {exporting ? <span className="spinner" /> : <Icon name="download" size={14} />} Export
-          </button>
+          <ExportButton kind="payouts" className="btn btn-ghost" small />
         </div>
         {rows.length ? (
           <>
@@ -203,8 +195,8 @@ function BulkModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [name, setName] = useState("");
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [hint, setHint] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | string | null>(null);
+  const [conf, setConf] = useState<Confirmation | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const bal = me.balances[mode];
   const valid = rows.filter((r) => !r.error);
@@ -214,14 +206,14 @@ function BulkModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   async function load(file: File) {
     setName(file.name);
     setRows(parse(await file.text()));
-    setError("");
+    setError(null);
   }
 
   function reset() {
     setRows([]);
     setName("");
-    setError("");
-    setHint(null);
+    setError(null);
+    setConf(null);
   }
 
   const items = valid.map((r) => ({ phone: r.phone!, amount: r.amount, reference: r.reference, reason: r.reason }));
@@ -234,20 +226,21 @@ function BulkModal({ open, onClose }: { open: boolean; onClose: () => void }) {
     onClose();
   }
 
-  /** Live batches are confirmed with a code texted to the account's number. */
+  /** Live batches are confirmed with the authenticator app (or an SMS code where that's on). */
   async function start() {
     if (total > bal.payout_float.available) return setError(`Float is ${money(bal.payout_float.available)} and this batch needs ${money(total)}. Nothing was sent.`);
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       if (mode === "test") await send();
       else {
-        const c = await api<{ required: boolean; phone_hint?: string }>("/app/confirmations", { body: { action: "batch", mode, items } });
-        if (c.required) setHint(c.phone_hint!);
+        const c = await api<Confirmation>("/app/confirmations", { body: { action: "batch", mode, items } });
+        if (c.required) setConf(c);
         else await send();
       }
     } catch (err) {
-      setError(`${(err as ApiError).message} Nothing was sent.`);
+      const e = err as ApiError;
+      setError(e.code === "two_factor_required" ? e : `${e.message} Nothing was sent.`);
     }
     setBusy(false);
   }
@@ -259,8 +252,8 @@ function BulkModal({ open, onClose }: { open: boolean; onClose: () => void }) {
       title="Bulk payout"
       width={640}
       footer={
-        hint ? (
-          <button className="btn btn-line" onClick={() => setHint(null)}>Back</button>
+        conf ? (
+          <button className="btn btn-line" onClick={() => setConf(null)}>Back</button>
         ) : rows.length ? (
           <>
             <button className="btn btn-line" onClick={reset}>Choose another file</button>
@@ -271,9 +264,9 @@ function BulkModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         ) : undefined
       }
     >
-      {hint ? (
+      {conf ? (
         <SmsConfirm
-          hint={hint}
+          conf={conf}
           summary={`Pay ${valid.length} recipients ${money(total)} in total`}
           onCode={send}
           onResend={() => api("/app/confirmations", { body: { action: "batch", mode, items } })}
@@ -333,7 +326,7 @@ function BulkModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             <div className="kpi"><dt>Fees</dt><dd style={{ fontSize: 18 }}>{money(fees)}</dd><span className="sub">from fee credit</span></div>
             <div className="kpi"><dt>Recipients</dt><dd style={{ fontSize: 18 }}>{valid.length}</dd><span className="sub">rows with errors are skipped</span></div>
           </div>
-          {error && <div className="form-error">{error}</div>}
+          <ActionError error={error} />
         </>
       )}
     </Modal>

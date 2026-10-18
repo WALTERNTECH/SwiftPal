@@ -58,8 +58,11 @@ export async function addChannel(
   return app.db.tx(async (q) => {
     if (await one(q, `select 1 from channels where merchant_id = $1 and shortcode = $2 and removed_at is null`, [merchant.id, input.shortcode]))
       throw new ApiError(409, "channel_exists", "That number is already added.");
-    const first = !(await one(q, `select 1 from channels where merchant_id = $1 and removed_at is null`, [merchant.id]));
     const id = `${input.kind}_${input.shortcode}`;
+    // One business per till or paybill: a number someone else registered goes through support.
+    if (await one(q, `select 1 from channels where id = $1 and removed_at is null`, [id]))
+      throw new ApiError(409, "channel_taken", "This number is registered to another SwiftPal account. Contact support if it's yours.");
+    const first = !(await one(q, `select 1 from channels where merchant_id = $1 and removed_at is null`, [merchant.id]));
     await q.query(`update channels set id = id || '_' || extract(epoch from removed_at)::bigint where id = $1 and removed_at is not null`, [id]);
     await q.query(
       // The account behind it is already verified, so the channel is live straight away.

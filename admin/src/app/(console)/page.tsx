@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { PageHeader } from "@/components/ui";
 import { useApi } from "@/lib/api";
-import { money, money2 } from "@/lib/format";
+import { dateTime, money, money2 } from "@/lib/format";
 
 type Overview = {
   merchants: { total: number; week: number; submitted: number; approved: number; suspended: number };
@@ -13,6 +13,12 @@ type Overview = {
   holdings: { payout_float: number; fee_credit: number };
   attention: { kyc: number; stuck_payments: number; stuck_payouts: number; failed_webhooks: number };
   system: Record<string, boolean | string>;
+  risk: {
+    near_limit: { id: string; name: string; sent_today: number; limit: number }[];
+    large_payouts: { id: string; merchant_id: string; name: string; amount: number; phone: string; status: string; created_at: string }[];
+    failed_sign_ins: { id: string; name: string; failures: number }[];
+  };
+  platform: { payouts_paused: boolean; payments_paused: boolean; signups_paused: boolean; announcement: { text: string } | null };
 };
 
 export default function OverviewPage() {
@@ -39,6 +45,16 @@ export default function OverviewPage() {
   return (
     <>
       <PageHeader title="Overview" sub="Live mode" />
+
+      {(o.platform.payouts_paused || o.platform.payments_paused || o.platform.signups_paused) && (
+        <Link href="/system" className="callout warn">
+          <b>Paused:</b>
+          <span className="grow">
+            {[o.platform.payouts_paused && "payouts and withdrawals", o.platform.payments_paused && "payment prompts", o.platform.signups_paused && "sign-ups"].filter(Boolean).join(", ")}
+          </span>
+          <span className="link">Platform switches</span>
+        </Link>
+      )}
 
       <div className="cards">
         {attention.map((a) => (
@@ -75,6 +91,32 @@ export default function OverviewPage() {
           </em>
         </div>
       </div>
+
+      {(o.risk.near_limit.length > 0 || o.risk.large_payouts.length > 0 || o.risk.failed_sign_ins.length > 0) && (
+        <section className="panel">
+          <div className="panel-head"><h3>Risk</h3><span className="muted" style={{ fontSize: 12.5 }}>Worth a look today</span></div>
+          <div className="health">
+            {o.risk.failed_sign_ins.map((r) => (
+              <Link key={`f${r.id}`} href={`/merchants/${r.id}`}>
+                <span><b style={{ fontWeight: 500 }}>{r.name}</b> <span className="muted">· {r.failures} wrong passwords in the last hour</span></span>
+                <span className="badge bad">Password attack?</span>
+              </Link>
+            ))}
+            {o.risk.near_limit.map((r) => (
+              <Link key={`n${r.id}`} href={`/merchants/${r.id}`}>
+                <span><b style={{ fontWeight: 500 }}>{r.name}</b> <span className="muted">· {money(r.sent_today)} of {money(r.limit)} daily limit sent</span></span>
+                <span className="badge warn">Near limit</span>
+              </Link>
+            ))}
+            {o.risk.large_payouts.map((r) => (
+              <Link key={`l${r.id}`} href={`/merchants/${r.merchant_id}`}>
+                <span><b style={{ fontWeight: 500 }}>{r.name}</b> <span className="muted">· {money(r.amount)} to <span className="mono">{r.phone}</span> · {dateTime(r.created_at)}</span></span>
+                <span className="badge info">Large payout</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid-2 grid-even">
         <section className="panel">

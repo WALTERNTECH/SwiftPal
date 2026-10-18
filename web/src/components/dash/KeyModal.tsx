@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CopyButton } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
 import { api, invalidate, useAccount, useMode, type ApiError } from "@/lib/api";
+import { ActionError } from "./SmsConfirm";
 import { Modal } from "./ui";
 
 const SCOPES = [
@@ -16,20 +17,24 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
   const me = useAccount();
   const mode = useMode();
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<string[]>(["payments:write", "payouts:write", "read"]);
+  const [scopes, setScopes] = useState<string[]>(["payments:write", "read"]);
+  const [code, setCode] = useState("");
   const [fresh, setFresh] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ApiError | string | null>(null);
+  // Live keys are a second-factor action when two-step is on; ones that send money need it on.
+  const needCode = mode === "live" && me.user.two_factor;
   const payoutsLocked = mode === "live" && me.merchant.verification_status !== "approved";
   const liveLocked = mode === "live" && !me.merchant.live_enabled;
 
   useEffect(() => {
     if (open) {
       setName("");
-      setScopes(["payments:write", "payouts:write", "read"]);
+      setScopes(["payments:write", "read"]);
+      setCode("");
       setFresh(null);
       setBusy(false);
-      setError("");
+      setError(null);
     }
   }, [open]);
 
@@ -60,16 +65,16 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
           <button className="btn btn-line" onClick={onClose}>Cancel</button>
           <button
             className="btn btn-pine"
-            disabled={!name.trim() || !scopes.length || busy || liveLocked}
+            disabled={!name.trim() || !scopes.length || busy || liveLocked || (needCode && code.length !== 6)}
             onClick={async () => {
               setBusy(true);
-              setError("");
+              setError(null);
               try {
-                const k = await api<{ id: string; secret: string }>("/app/keys", { body: { name: name.trim(), mode, scopes } });
+                const k = await api<{ id: string; secret: string }>("/app/keys", { body: { name: name.trim(), mode, scopes, code: needCode ? code : undefined } });
                 invalidate("/app/keys");
                 setFresh(k.secret);
               } catch (err) {
-                setError((err as ApiError).message);
+                setError(err as ApiError);
               }
               setBusy(false);
             }}
@@ -110,7 +115,16 @@ export function KeyModal({ open, onClose }: { open: boolean; onClose: () => void
           })}
         </div>
       </fieldset>
-      {error && <div className="form-error">{error}</div>}
+      {mode === "live" && scopes.includes("payouts:write") && !me.user.two_factor && (
+        <p className="hint">Keys that send money need two-step verification on your account.</p>
+      )}
+      {needCode && (
+        <div className="field">
+          <label className="label" htmlFor="k2fa">Code from your authenticator app</label>
+          <input id="k2fa" className="input mono" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))} />
+        </div>
+      )}
+      <ActionError error={error} />
     </Modal>
   );
 }

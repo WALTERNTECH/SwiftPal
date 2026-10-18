@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { CountUp } from "@/components/dash/charts";
+import { ExportButton } from "@/components/dash/ExportButton";
 import { Empty, PageHeader, useToast } from "@/components/dash/ui";
-import { api, invalidate, useAccount, useApi, useMode, type ApiError, type LedgerRow } from "@/lib/api";
+import { api, can, invalidate, useAccount, useApi, useMode, type ApiError, type LedgerRow } from "@/lib/api";
 import { dateTime, money2 } from "@/lib/format";
 
 const KIND: Record<string, string> = {
@@ -14,6 +15,7 @@ const KIND: Record<string, string> = {
   payout: "Payout",
   withdrawal: "Withdrawal to M-Pesa",
   starter_credit: "Starter credit",
+  adjustment: "Adjustment by SwiftPal",
 };
 
 const fmt2 = (n: number) => n.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -46,7 +48,7 @@ export default function Wallet() {
 
   return (
     <>
-      <PageHeader title="Wallet" sub="Fee credit and payout float" />
+      <PageHeader title="Wallet" sub="Fee credit and payout float" actions={<ExportButton kind="statement" />} />
 
       <section className="bal-hero rise">
         <div className="bal-top">
@@ -58,9 +60,11 @@ export default function Wallet() {
             <span>Fee credit</span>
             <div className="bal-amt"><small>KES</small><CountUp value={bal.fee_credit.available} format={fmt2} /></div>
             <div className="bal-meta">held for pending {money2(bal.fee_credit.held)} · ≈ {Math.floor(bal.fee_credit.available / 2.5).toLocaleString()} paid prompts</div>
-            <div className="bal-actions" style={{ marginTop: 14 }}>
-              <button className="btn btn-pine" onClick={() => open("topup-fee")}><Icon name="plus" size={14} /> Top up</button>
-            </div>
+            {can(me, "money") && (
+              <div className="bal-actions" style={{ marginTop: 14 }}>
+                <button className="btn btn-pine" onClick={() => open("topup-fee")}><Icon name="plus" size={14} /> Top up</button>
+              </div>
+            )}
           </div>
           <div className="bal-item">
             <span>Payout float</span>
@@ -68,10 +72,12 @@ export default function Wallet() {
             <div className="bal-meta">
               withdrawable{bal.payout_float.held > 0 ? ` · ${money2(bal.payout_float.held)} in flight` : ""} · failed payouts return here
             </div>
-            <div className="bal-actions" style={{ marginTop: 14 }}>
-              <button className="btn btn-pine" onClick={() => open("topup-float")}><Icon name="plus" size={14} /> Fund float</button>
-              <button className="btn btn-line" onClick={() => open("withdraw")} disabled={bal.payout_float.available < 10}>Withdraw</button>
-            </div>
+            {can(me, "money") && (
+              <div className="bal-actions" style={{ marginTop: 14 }}>
+                <button className="btn btn-pine" onClick={() => open("topup-float")}><Icon name="plus" size={14} /> Fund float</button>
+                <button className="btn btn-line" onClick={() => open("withdraw")} disabled={bal.payout_float.available < 10}>Withdraw</button>
+              </div>
+            )}
           </div>
         </div>
       </section>

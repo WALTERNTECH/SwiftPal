@@ -4,7 +4,7 @@ import { after, before, describe, it } from "node:test";
 import { hmacHex } from "../src/lib.js";
 import { dispatchQueued } from "../src/services/payouts.js";
 import { deliverDue } from "../src/services/webhooks.js";
-import { boot, form, JPEG, mailCode, merchant, smsCode, stop, waitFor, type Ctx } from "./helpers.js";
+import { boot, enableTwoFactor, form, JPEG, mailCode, merchant, smsCode, stop, waitFor, type Ctx } from "./helpers.js";
 
 let c: Ctx;
 before(async () => {
@@ -414,7 +414,14 @@ describe("channels", () => {
     const ch = (await m.dash("POST", "/app/channels", { kind: "till", shortcode: "5521093", display_name: "Njeri Home Stores" })).json();
     assert.equal(ch.status, "verified");
     assert.equal(ch.is_default, true);
-    const key = (await m.dash("POST", "/app/keys", { name: "prod", mode: "live", scopes: ["payments:write", "payouts:write", "read"] })).json();
+    // A live key that can only take payments needs nothing more; one that can send money needs two-step verification.
+    const collect = (await m.dash("POST", "/app/keys", { name: "prod", mode: "live", scopes: ["payments:write", "read"] })).json();
+    assert.match(collect.secret, /^sp_live_/);
+    const payouts = { name: "payroll", mode: "live", scopes: ["payments:write", "payouts:write", "read"] };
+    assert.equal((await m.dash("POST", "/app/keys", payouts)).json().error.code, "two_factor_required");
+    const tf = await enableTwoFactor(c, m);
+    assert.equal((await m.dash("POST", "/app/keys", payouts)).json().error.code, "code_required");
+    const key = (await m.dash("POST", "/app/keys", { ...payouts, code: await tf.code() })).json();
     assert.match(key.secret, /^sp_live_/);
   });
 });

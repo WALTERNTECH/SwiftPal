@@ -14,11 +14,12 @@ admin/   Operations console: KYC review, merchants, manual reconciliation, audit
 
 | Surface | Auth | What |
 |---|---|---|
-| `/v1/*` | `Authorization: Bearer sp_test_…` / `sp_live_…` (Basic with the key as username also works) | `stk-push`, `payments`, `payouts`, `payouts/batches`, `balance`, `events` |
+| `/v1/*` | `Authorization: Bearer sp_test_…` / `sp_live_…` (Basic with the key as username also works) | `stk-push`, `payments`, `payments/{id}/refunds`, `payouts`, `payouts/batches`, `balance`, `events` |
 | `/app/*` | `sp_session` httpOnly cookie + `X-Requested-With: SwiftPal` | Everything the dashboard does |
 | `/callbacks/daraja/{stk,b2c-result,b2c-timeout}/:token` | secret path token | Safaricom results |
 | `/connect/{start,token}` | none (device code) | An AI assistant asks for a key; the merchant approves at `/connect` in the dashboard |
-| `/admin/*` | `sp_admin` cookie (password + TOTP) through the admin gateway, or `Bearer ADMIN_TOKEN` | The operations console |
+| `/pay/*` | none, rate-limited per IP and per phone | The public payment-link page |
+| `/admin/*` | `sp_admin` cookie (password + TOTP) through the admin gateway; `Bearer ADMIN_TOKEN` only outside production or with `ADMIN_API=on` | The operations console |
 
 How money moves:
 
@@ -27,6 +28,17 @@ How money moves:
 - **B2C** holds amount + fee; a failure refunds both. Batches reserve all-or-nothing and are sent by the worker. Live float is only ever released on M-Pesa's own answer.
 - **Channels** are `linked` (merchant's own shortcode + passkey, linked to SwiftPal's Daraja app) or `platform` (SwiftPal's M-Pesa Express shortcode with the merchant's till/paybill as PartyB). Paybills always carry their account number. A KES 1 prompt to the owner's phone verifies a channel and turns on live mode.
 - **Test mode** (`sp_test_` keys) runs against SwiftPal's sandbox driver, which answers in Daraja's shapes through the same handlers. Numbers `254700000001/2/3` force cancelled / insufficient funds / timeout.
+
+Security:
+
+- **Visitor IPs.** The web app and console call the API from their own servers and pass the visitor's IP in `X-SwiftPal-Client-IP`, trusted only with `WEB_PROXY_SECRET` / `ADMIN_GATEWAY_SECRET`. Direct callers are read from Render's `X-Forwarded-For` with three trusted hops, so a forged header is ignored.
+- **Rate limits** (in memory, one instance): wrong passwords per email from any IP and per IP, sign-ups, reset emails, invites, connect polling, 300 req/min per API key, 600/min per dashboard user, payment-link prompts per IP and per phone.
+- **Second factor.** Merchants can turn on an authenticator app (TOTP, one-time recovery codes). With SMS codes off, live payouts, refunds and withdrawals from the dashboard, and live keys that can send money, require it. Withdrawals only go to the owner's verified number.
+- **Roles.** Owner, Admin, Finance, Developer, Support; every `/app` route is checked against the role (`RULES` in `http/dashboard.ts`).
+- **Money limits.** A daily cap on live payouts per merchant (`PAYOUT_DAILY_LIMIT_KES`, or the merchant's own from the console), and console switches that pause payouts, prompts or sign-ups platform-wide.
+- **Webhooks** are refused for private, loopback, link-local and metadata addresses, checked again on the address the socket connects to (DNS rebinding).
+- **Headers.** API: `nosniff`, `DENY` framing, `default-src 'none'`, `no-store` on account routes. Web and console: a same-origin Content-Security-Policy with `frame-ancestors 'none'`, HSTS.
+- **Audit.** Merchants see their own security log (Settings → Activity); every console action is in `admin_audit`.
 
 Database: the `swiftpal` schema in Supabase, owned by the `swiftpal_api` role, which has no grants outside it. Migrations run at boot (`src/migrations.ts`, append-only).
 

@@ -4,7 +4,9 @@ import type { App } from "../app.js";
 import { ApiError, safeEqual } from "../lib.js";
 import * as admins from "../services/admins.js";
 import type { Admin, Stage } from "../services/admins.js";
+import * as controls from "../services/controls.js";
 import * as ops from "../services/ops.js";
+import * as platform from "../services/platform.js";
 import * as verification from "../services/verification.js";
 import { parse } from "./common.js";
 
@@ -48,6 +50,8 @@ export function adminRoutes(api: FastifyInstance, app: App) {
         // Scripts may use the server's admin token; it acts as the system, not as a person.
         const h = req.headers.authorization ?? "";
         if (h.startsWith("Bearer ")) {
+          // In production the token is a setup key only, unless ADMIN_API=on: it would skip two-step sign-in.
+          if (!app.cfg.adminApi) throw new ApiError(404, "not_found", `No route for ${req.method} ${path}.`, "not_found");
           if (!app.cfg.adminToken || !safeEqual(h.slice(7), app.cfg.adminToken)) throw new ApiError(401, "unauthorized", "Admin token required.", "authentication_error");
           req.admin = null;
           req.adminStage = "full";
@@ -76,14 +80,14 @@ export function adminRoutes(api: FastifyInstance, app: App) {
 
       r.post("/auth/setup", async (req, reply) => {
         const b = parse(z.object({ setup_key: z.string().min(1).max(200), name: z.string().trim().min(2).max(80), email: z.email(), password: z.string().min(12).max(200) }), req.body);
-        const out = await admins.setup(app, { setupKey: b.setup_key, name: b.name, email: b.email, password: b.password }, req.ip, req.headers["user-agent"]);
+        const out = await admins.setup(app, { setupKey: b.setup_key, name: b.name, email: b.email, password: b.password }, req.clientIp, req.headers["user-agent"]);
         setCookie(app, reply, out.session.token, out.session.maxAge);
         return { stage: out.stage };
       });
 
       r.post("/auth/login", async (req, reply) => {
         const b = parse(z.object({ email: z.string().max(200), password: z.string().max(200) }), req.body);
-        const out = await admins.login(app, b.email, b.password, req.ip, req.headers["user-agent"]);
+        const out = await admins.login(app, b.email, b.password, req.clientIp, req.headers["user-agent"]);
         setCookie(app, reply, out.session.token, out.session.maxAge);
         return { stage: out.stage };
       });
@@ -93,13 +97,13 @@ export function adminRoutes(api: FastifyInstance, app: App) {
       r.get("/auth/enroll", async (req) => admins.startEnroll(app, person(req)));
       r.post("/auth/enroll", async (req, reply) => {
         const b = parse(z.object({ code: code6 }), req.body);
-        const s = await admins.completeSignIn(app, person(req), "enroll", req.adminSession!, b.code, req.ip, req.headers["user-agent"]);
+        const s = await admins.completeSignIn(app, person(req), "enroll", req.adminSession!, b.code, req.clientIp, req.headers["user-agent"]);
         setCookie(app, reply, s.token, s.maxAge);
         return { stage: "full" };
       });
       r.post("/auth/totp", async (req, reply) => {
         const b = parse(z.object({ code: code6 }), req.body);
-        const s = await admins.completeSignIn(app, person(req), "totp", req.adminSession!, b.code, req.ip, req.headers["user-agent"]);
+        const s = await admins.completeSignIn(app, person(req), "totp", req.adminSession!, b.code, req.clientIp, req.headers["user-agent"]);
         setCookie(app, reply, s.token, s.maxAge);
         return { stage: "full" };
       });
@@ -110,7 +114,34 @@ export function adminRoutes(api: FastifyInstance, app: App) {
       });
 
       // ---------- overview ----------
-      r.get("/overview", async () => ops.overview(app));
+      r.get("/overview", async () => ({ ...(await ops.overview(app)), risk: await controls.risk(app), platform: await platform.settings(app) }));
+      r.get("/risk", async () => controls.risk(app));
+
+      // ---------- platform switches ----------
+      r.get("/platform", async () => platform.settings(app));
+      r.patch("/platform", async (req) => {
+        const b = parse(
+          z.object({
+            payouts_paused: z.boolean().optional(),
+            payments_paused: z.boolean().optional(),
+            signups_paused: z.boolean().optional(),
+            announcement: z.object({ text: z.string().trim().min(3).max(280), tone: z.enum(["info", "warning"]) }).nullable().optional(),
+          }),
+          req.body,
+        );
+        return platform.update(app, req.admin?.id ?? null, b, req.clientIp);
+      });
+
+      // ---------- reports ----------
+      r.get("/reports", async (req) => {
+        const q = req.query as { from?: string; to?: string };
+        return controls.report(app, q.from, q.to);
+      });
+      r.get("/reports/revenue.csv", async (req, reply) => {
+        const q = req.query as { from?: string; to?: string };
+        const out = await controls.revenueCsv(app, q.from, q.to);
+        return reply.header("Content-Type", "text/csv; charset=utf-8").header("Content-Disposition", `attachment; filename="${out.filename}"`).send(`\uFEFF${out.body}`);
+      });
       r.get("/system", async () => ops.system(app));
 
       // ---------- verification ----------
@@ -118,17 +149,17 @@ export function adminRoutes(api: FastifyInstance, app: App) {
       r.get("/verifications/:id", async (req) => {
         const v = await verification.reviewDetail(app, idParam(req));
         // Opening a KYC record shows the full ID number, so it goes on the record.
-        await admins.audit(app.db, req.admin?.id ?? null, "kyc.viewed", { type: "merchant", id: String(v.merchant_id) }, { verification: v.id }, req.ip);
+        await admins.audit(app.db, req.admin?.id ?? null, "kyc.viewed", { type: "merchant", id: String(v.merchant_id) }, { verification: v.id }, req.clientIp);
         return v;
       });
       r.get("/files/:id", async (req, reply) => {
         const f = await verification.reviewFile(app, idParam(req));
         return reply.header("Content-Type", f.contentType).header("Cache-Control", "private, no-store").header("Content-Disposition", `inline; filename="${f.filename.replace(/"/g, "")}"`).send(f.bytes);
       });
-      r.post("/verifications/:id/approve", async (req) => ops.decideVerification(app, req.admin ?? null, idParam(req), true, undefined, req.ip));
+      r.post("/verifications/:id/approve", async (req) => ops.decideVerification(app, req.admin ?? null, idParam(req), true, undefined, req.clientIp));
       r.post("/verifications/:id/reject", async (req) => {
         const b = parse(z.object({ note: z.string().trim().min(5, "say what needs changing").max(500) }), req.body ?? {});
-        return ops.decideVerification(app, req.admin ?? null, idParam(req), false, b.note, req.ip);
+        return ops.decideVerification(app, req.admin ?? null, idParam(req), false, b.note, req.clientIp);
       });
 
       // ---------- merchants ----------
@@ -136,7 +167,21 @@ export function adminRoutes(api: FastifyInstance, app: App) {
         const q = req.query as { q?: string; status?: string };
         return ops.listMerchants(app, { q: q.q, status: q.status });
       });
-      r.get("/merchants/:id", async (req) => ops.merchantDetail(app, idParam(req)));
+      r.get("/merchants/:id", async (req) => ({ ...(await ops.merchantDetail(app, idParam(req))), ...(await controls.merchantExtras(app, idParam(req))) }));
+      r.patch("/merchants/:id/terms", async (req) => {
+        const money = (max: number) => z.number().min(0).max(max).nullable().optional();
+        const b = parse(z.object({ payout_daily_limit: money(50_000_000), stk_fee: money(1000), b2c_fee_pct: z.number().int().min(0).max(100).nullable().optional() }), req.body);
+        return controls.setTerms(app, req.admin ?? null, idParam(req), b, req.clientIp);
+      });
+      r.post("/merchants/:id/notes", async (req) => {
+        const b = parse(z.object({ body: z.string().trim().min(2).max(2000) }), req.body);
+        return controls.addNote(app, person(req), idParam(req), b.body);
+      });
+      r.post("/merchants/:id/sign-out", async (req) => controls.signOutEveryone(app, req.admin ?? null, idParam(req), req.clientIp));
+      r.post("/merchants/:id/users/:user/reset-2fa", async (req) => {
+        await controls.resetMemberTwoFactor(app, req.admin ?? null, idParam(req), (req.params as { user: string }).user, req.clientIp);
+        return { ok: true };
+      });
       r.post("/merchants/:id/adjust", async (req) => {
         const b = parse(
           z.object({
@@ -149,19 +194,19 @@ export function adminRoutes(api: FastifyInstance, app: App) {
           }),
           req.body,
         );
-        return ops.adjust(app, req.admin ?? null, idParam(req), b, req.ip);
+        return ops.adjust(app, req.admin ?? null, idParam(req), b, req.clientIp);
       });
       r.post("/merchants/:id/suspend", async (req) => {
         const b = parse(z.object({ reason: z.string().trim().min(5).max(300) }), req.body);
-        await ops.setSuspended(app, req.admin ?? null, idParam(req), true, b.reason, req.ip);
+        await ops.setSuspended(app, req.admin ?? null, idParam(req), true, b.reason, req.clientIp);
         return { ok: true };
       });
       r.post("/merchants/:id/unsuspend", async (req) => {
-        await ops.setSuspended(app, req.admin ?? null, idParam(req), false, undefined, req.ip);
+        await ops.setSuspended(app, req.admin ?? null, idParam(req), false, undefined, req.clientIp);
         return { ok: true };
       });
       r.post("/keys/:id/revoke", async (req) => {
-        await ops.revokeKey(app, req.admin ?? null, idParam(req), req.ip);
+        await ops.revokeKey(app, req.admin ?? null, idParam(req), req.clientIp);
         return { ok: true };
       });
 
@@ -171,12 +216,12 @@ export function adminRoutes(api: FastifyInstance, app: App) {
         const q = req.query as { q?: string; status?: string; purpose?: string; stuck?: string; mode?: string };
         return ops.listPayments(app, { q: q.q, status: q.status, purpose: q.purpose, mode: q.mode, stuck: q.stuck === "1" });
       });
-      r.post("/payments/:id/resolve", async (req) => ops.resolvePayment(app, req.admin ?? null, idParam(req), parse(resolution, req.body), req.ip));
+      r.post("/payments/:id/resolve", async (req) => ops.resolvePayment(app, req.admin ?? null, idParam(req), parse(resolution, req.body), req.clientIp));
       r.get("/payouts", async (req) => {
         const q = req.query as { q?: string; status?: string; stuck?: string; mode?: string };
         return ops.listPayouts(app, { q: q.q, status: q.status, mode: q.mode, stuck: q.stuck === "1" });
       });
-      r.post("/payouts/:id/resolve", async (req) => ops.resolvePayout(app, req.admin ?? null, idParam(req), parse(resolution, req.body), req.ip));
+      r.post("/payouts/:id/resolve", async (req) => ops.resolvePayout(app, req.admin ?? null, idParam(req), parse(resolution, req.body), req.clientIp));
 
       // ---------- audit and team ----------
       r.get("/audit", async (req) => {
@@ -186,18 +231,18 @@ export function adminRoutes(api: FastifyInstance, app: App) {
       r.get("/admins", async () => admins.list(app));
       r.post("/admins", async (req, reply) => {
         const b = parse(z.object({ name: z.string().trim().min(2).max(80), email: z.email(), password: z.string().min(12).max(200), role: z.enum(["owner", "admin"]).default("admin") }), req.body);
-        return reply.code(201).send(await admins.create(app, person(req), b, req.ip));
+        return reply.code(201).send(await admins.create(app, person(req), b, req.clientIp));
       });
       r.post("/admins/:id/disable", async (req) => {
-        await admins.setDisabled(app, person(req), idParam(req), true, req.ip);
+        await admins.setDisabled(app, person(req), idParam(req), true, req.clientIp);
         return { ok: true };
       });
       r.post("/admins/:id/enable", async (req) => {
-        await admins.setDisabled(app, person(req), idParam(req), false, req.ip);
+        await admins.setDisabled(app, person(req), idParam(req), false, req.clientIp);
         return { ok: true };
       });
       r.post("/admins/:id/reset-2fa", async (req) => {
-        await admins.resetTwoFactor(app, person(req), idParam(req), req.ip);
+        await admins.resetTwoFactor(app, person(req), idParam(req), req.clientIp);
         return { ok: true };
       });
     },

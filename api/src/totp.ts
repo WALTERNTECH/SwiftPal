@@ -1,8 +1,8 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { safeEqual } from "./lib.js";
 
-// Time-based one-time codes (RFC 6238) for admin sign-in: the codes an
-// authenticator app such as Google Authenticator or 1Password shows.
+// Time-based one-time codes (RFC 6238) for admin and merchant sign-in: the
+// codes an authenticator app such as Google Authenticator or 1Password shows.
 
 const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -64,5 +64,13 @@ export function verifyTotp(secret: string, code: string, lastStep: number | null
   return null;
 }
 
-export const otpauthUrl = (secret: string, account: string) =>
-  `otpauth://totp/${encodeURIComponent(`SwiftPal Admin:${account}`)}?secret=${secret}&issuer=${encodeURIComponent("SwiftPal Admin")}&digits=6&period=30`;
+export const otpauthUrl = (secret: string, account: string, issuer = "SwiftPal Admin") =>
+  `otpauth://totp/${encodeURIComponent(`${issuer}:${account}`)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&digits=6&period=30`;
+
+/** The step a code belongs to, ignoring replay protection: tells "already used" apart from "wrong". */
+export function matchedStep(secret: string, code: string, now = Date.now()) {
+  if (!/^\d{6}$/.test(code)) return null;
+  const step = Math.floor(now / 30_000);
+  for (const s of [step - 1, step, step + 1]) if (safeEqual(hotp(secret, s), code)) return s;
+  return null;
+}

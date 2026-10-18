@@ -2,7 +2,9 @@ import { randomInt } from "node:crypto";
 import type { App, Mode } from "../app.js";
 import { one, type Q } from "../db.js";
 import { ApiError, hashPassword, newId, normalisePhone, open, seal, sha256, token, verifyPassword } from "../lib.js";
+import { blocked, clear, fail, retryIn, tooMany } from "../limits.js";
 import * as otp from "./otp.js";
+import { checkPassword, record, verifySecondFactor, type Ctx } from "./security.js";
 import { createBalances } from "./wallet.js";
 
 export type Merchant = {
@@ -21,6 +23,9 @@ export type Merchant = {
   live_enabled: boolean;
   suspended_at: string | null;
   suspended_reason: string | null;
+  payout_daily_limit_cents: number | null;
+  stk_fee_cents: number | null;
+  b2c_fee_pct: number | null;
   created_at: string;
 };
 
@@ -36,11 +41,14 @@ export type User = {
   phone: string;
   first_name: string;
   last_name: string;
-  role: string;
+  role: Role;
   email_verified_at: string | null;
   phone_verified_at: string | null;
+  totp_enabled_at: string | null;
   created_at: string;
 };
+
+export type Role = "owner" | "admin" | "developer" | "finance" | "support";
 
 export type ApiKeyRow = {
   id: string;
@@ -59,7 +67,8 @@ export type ApiKeyRow = {
 
 export const SCOPES = ["payments:write", "payouts:write", "read"] as const;
 const SESSION_DAYS = 30;
-const USER_COLS = "id, merchant_id, email, phone, first_name, last_name, role, email_verified_at, phone_verified_at, created_at";
+const USER_COLS = "id, merchant_id, email, phone, first_name, last_name, role, email_verified_at, phone_verified_at, totp_enabled_at, created_at";
+const U_COLS = USER_COLS.split(", ").map((c) => `u.${c}`).join(", ");
 
 // ---------- sign-up: phone code, then email code ----------
 
@@ -67,7 +76,7 @@ export async function signUp(app: App, input: { firstName: string; lastName: str
   const email = input.email.trim().toLowerCase();
   const phone = normalisePhone(input.phone);
   if (!phone) throw new ApiError(400, "invalid_phone", "Enter a Safaricom number, e.g. 0712 345 678.");
-  if (input.password.length < 10) throw new ApiError(400, "weak_password", "Use at least 10 characters.");
+  checkPassword(input.password, email);
   const passwordHash = await hashPassword(input.password);
   const { user, session } = await app.db.tx(async (q) => {
     if (await one(q, `select 1 from users where email = $1`, [email])) throw new ApiError(409, "email_taken", "An account with this email already exists. Sign in instead.");
@@ -83,6 +92,7 @@ export async function signUp(app: App, input: { firstName: string; lastName: str
       [userId, merchantId, email, phone, input.firstName.trim(), input.lastName.trim(), passwordHash, verified],
     );
     const session = await createSession(q, userId, input.ip, input.ua);
+    await record(q, merchantId, userId, "signed_up", {}, input);
     const user = (await one<User>(q, `select ${USER_COLS} from users where id = $1`, [userId]))!;
     return { user, session };
   });
@@ -173,27 +183,37 @@ export async function verifyEmail(app: App, userId: string, code: string) {
 
 // ---------- sign-in and sessions ----------
 
-const attempts = new Map<string, { n: number; until: number }>();
-
+/**
+ * Wrong passwords are counted per email from any address (so rotating IPs
+ * doesn't help guess one account) and per address (so one source can't try
+ * many accounts). Either lock lasts 15 minutes from the last wrong guess.
+ */
 export async function signIn(app: App, input: { email: string; password: string; ip?: string; ua?: string }) {
   const email = input.email.trim().toLowerCase();
-  const k = `${email}|${input.ip ?? ""}`;
-  const a = attempts.get(k);
-  if (a && a.until > Date.now() && a.n >= 10) throw new ApiError(429, "too_many_attempts", "Too many attempts. Try again in 15 minutes.", "rate_limit_error");
-  const row = await one<User & { password_hash: string }>(app.db, `select ${USER_COLS}, password_hash from users where email = $1`, [email]);
+  const byEmail = `login:email:${email}`;
+  const byIp = `login:ip:${input.ip ?? ""}`;
+  if (blocked(byEmail, 10) || blocked(byIp, 30)) throw tooMany("Too many attempts. Try again in 15 minutes.", Math.max(retryIn(byEmail), retryIn(byIp)));
+  const row = await one<User & { password_hash: string; disabled_at: string | null }>(app.db, `select ${USER_COLS}, password_hash, disabled_at from users where email = $1`, [email]);
   const ok = row ? await verifyPassword(input.password, row.password_hash) : await verifyPassword(input.password, "scrypt$AAAA$AAAA");
-  if (!row || !ok) {
-    attempts.set(k, { n: (a && a.until > Date.now() ? a.n : 0) + 1, until: Date.now() + 15 * 60_000 });
+  if (!row || !ok || row.disabled_at) {
+    fail(byEmail, 15 * 60_000);
+    fail(byIp, 15 * 60_000);
+    if (row && !ok) await record(app.db, row.merchant_id, row.id, "sign_in_failed", {}, input);
     throw new ApiError(401, "invalid_credentials", "Email or password is incorrect.", "authentication_error");
   }
-  attempts.delete(k);
-  const { password_hash: _drop, ...rest } = row;
+  clear(byEmail);
+  const { password_hash: _drop, disabled_at: _d, ...rest } = row;
   const user = rest as User;
+  // An authenticator app wins over SMS: it works without signal and can't be SIM-swapped.
+  if (user.totp_enabled_at) return { user, session: await createSession(app.db, user.id, input.ip, input.ua, true), otp: { method: "totp" as const } };
   // An account that never proved its number finishes sign-up first; there's no phone to send to.
-  if (!app.cfg.codes || !user.phone_verified_at) return { user, session: await createSession(app.db, user.id, input.ip, input.ua), otp: null };
+  if (!app.cfg.codes || !user.phone_verified_at) {
+    await record(app.db, user.merchant_id, user.id, "signed_in", { method: "password" }, input);
+    return { user, session: await createSession(app.db, user.id, input.ip, input.ua), otp: null };
+  }
   const session = await createSession(app.db, user.id, input.ip, input.ua, true);
   const sent = await sendLoginCode(app, user).catch((e: ApiError) => ({ phone_hint: otp.maskPhone(user.phone), expires_in: 0, error: e.message }));
-  return { user, session, otp: sent };
+  return { user, session, otp: { method: "sms" as const, ...sent } };
 }
 
 const sendLoginCode = (app: App, user: User) =>
@@ -208,9 +228,8 @@ async function pendingUser(app: App, raw: string | undefined) {
   if (!raw) return null;
   return one<User>(
     app.db,
-    `select u.id, u.merchant_id, u.email, u.phone, u.first_name, u.last_name, u.role, u.email_verified_at, u.phone_verified_at, u.created_at
-     from sessions s join users u on u.id = s.user_id
-     where s.token_hash = $1 and s.otp_pending and s.created_at > now() - interval '15 minutes'`,
+    `select ${U_COLS} from sessions s join users u on u.id = s.user_id
+     where s.token_hash = $1 and s.otp_pending and s.created_at > now() - interval '15 minutes' and u.disabled_at is null`,
     [sha256(raw)],
   );
 }
@@ -218,6 +237,7 @@ async function pendingUser(app: App, raw: string | undefined) {
 export async function resendLoginCode(app: App, raw: string | undefined) {
   const user = await pendingUser(app, raw);
   if (!user) throw new ApiError(401, "login_expired", "Sign in again to get a new code.", "authentication_error");
+  if (user.totp_enabled_at) throw new ApiError(400, "authenticator", "Use the code from your authenticator app.");
   return sendLoginCode(app, user);
 }
 
@@ -225,9 +245,13 @@ export async function resendLoginCode(app: App, raw: string | undefined) {
 export async function completeLogin(app: App, raw: string | undefined, code: string, ip?: string, ua?: string) {
   const user = await pendingUser(app, raw);
   if (!user) throw new ApiError(401, "login_expired", "Sign in again to get a new code.", "authentication_error");
-  await otp.check(app, { userId: user.id, purpose: "login", code });
+  const ctx: Ctx = { ip, ua };
+  let method: string = "sms";
+  if (user.totp_enabled_at) method = await verifySecondFactor(app, user, code, ctx, { allowRecovery: true });
+  else await otp.check(app, { userId: user.id, purpose: "login", code });
   return app.db.tx(async (q) => {
     await q.query(`delete from sessions where token_hash = $1`, [sha256(raw!)]);
+    await record(q, user.merchant_id, user.id, "signed_in", { method }, ctx);
     return { user, session: await createSession(q, user.id, ip, ua) };
   });
 }
@@ -241,16 +265,22 @@ async function createSession(q: Q, userId: string, ip?: string, ua?: string, otp
   return t;
 }
 
+/** A full session for someone who just proved who they are another way (an accepted invite). */
+export const openSession = (app: App, userId: string, ip?: string, ua?: string) => createSession(app.db, userId, ip, ua);
+
 export async function sessionUser(app: App, raw: string | undefined) {
   if (!raw) return null;
-  const row = await one<User & { expired: boolean }>(
+  const hash = sha256(raw);
+  const row = await one<User & { expired: boolean; stale: boolean }>(
     app.db,
-    `select u.id, u.merchant_id, u.email, u.phone, u.first_name, u.last_name, u.role, u.email_verified_at, u.phone_verified_at, u.created_at, s.expires_at < now() as expired
-     from sessions s join users u on u.id = s.user_id where s.token_hash = $1 and not s.otp_pending`,
-    [sha256(raw)],
+    `select ${U_COLS}, s.expires_at < now() as expired, coalesce(s.last_seen_at, s.created_at) < now() - interval '5 minutes' as stale
+     from sessions s join users u on u.id = s.user_id where s.token_hash = $1 and not s.otp_pending and u.disabled_at is null`,
+    [hash],
   );
   if (!row || row.expired) return null;
-  const { expired: _e, ...user } = row;
+  // Last seen, at most every five minutes, for the sessions list.
+  if (row.stale) app.db.query(`update sessions set last_seen_at = now() where token_hash = $1`, [hash]).catch(() => {});
+  const { expired: _e, stale: _s, ...user } = row;
   return user as User;
 }
 
@@ -276,16 +306,23 @@ export async function requestReset(app: App, email: string) {
 }
 
 /** Sets the new password and signs every session out. Signing in again needs the SMS code. */
-export async function resetPassword(app: App, raw: string, password: string) {
-  if (password.length < 10) throw new ApiError(400, "weak_password", "Use at least 10 characters.");
+export async function resetPassword(app: App, raw: string, password: string, ctx: Ctx = {}) {
+  const owner = await one<{ email: string }>(app.db, `select u.email from password_resets r join users u on u.id = r.user_id where r.token_hash = $1`, [sha256(raw)]);
+  checkPassword(password, owner?.email);
   const hash = await hashPassword(password);
   return app.db.tx(async (q) => {
-    const r = await one<{ user_id: string; bad: boolean }>(q, `select user_id, (used_at is not null or expires_at < now()) as bad from password_resets where token_hash = $1 for update`, [sha256(raw)]);
+    const r = await one<{ user_id: string; merchant_id: string; bad: boolean }>(
+      q,
+      `select r.user_id, u.merchant_id, (r.used_at is not null or r.expires_at < now()) as bad
+       from password_resets r join users u on u.id = r.user_id where r.token_hash = $1 for update of r`,
+      [sha256(raw)],
+    );
     if (!r || r.bad) throw new ApiError(400, "invalid_reset_link", "This reset link has expired or was already used. Ask for a new one.");
     await q.query(`update password_resets set used_at = now() where token_hash = $1`, [sha256(raw)]);
-    await q.query(`update users set password_hash = $2, email_verified_at = coalesce(email_verified_at, now()) where id = $1`, [r.user_id, hash]);
-    // Everyone signed in with the old password is signed out.
+    await q.query(`update users set password_hash = $2, password_changed_at = now(), email_verified_at = coalesce(email_verified_at, now()) where id = $1`, [r.user_id, hash]);
+    // Everyone signed in with the old password is signed out. Two-step verification stays on.
     await q.query(`delete from sessions where user_id = $1`, [r.user_id]);
+    await record(q, r.merchant_id, r.user_id, "password_reset", {}, ctx);
   });
 }
 
@@ -318,6 +355,7 @@ export async function confirmPhoneChange(app: App, user: User, phone: string, cu
     { userId: user.id, purpose: "phone_change_new", code: newCode, payload: phone },
   );
   await app.db.query(`update users set phone = $2, phone_verified_at = now() where id = $1`, [user.id, phone]);
+  await record(app.db, user.merchant_id, user.id, "phone_changed", { phone: otp.maskPhone(phone) });
   await app.mail.send(
     user.email,
     "Your SwiftPal phone number changed",
@@ -329,6 +367,11 @@ If you didn't do this, reset your password and contact support.`,
 
 export async function getMerchant(q: Q, id: string) {
   return (await one<Merchant>(q, `select * from merchants where id = $1`, [id]))!;
+}
+
+/** The account owner: withdrawals only ever go to their verified number. */
+export async function ownerOf(q: Q, merchantId: string) {
+  return (await one<User>(q, `select ${USER_COLS} from users where merchant_id = $1 and role = 'owner' order by created_at limit 1`, [merchantId]))!;
 }
 
 // ---------- API keys ----------

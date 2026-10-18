@@ -46,3 +46,9 @@ export const modeOf = (req: FastifyRequest): Mode => {
 };
 
 export const send = (reply: FastifyReply, status: number, body: unknown) => reply.code(status).send(body);
+
+/** A page size from the query string: whole, at least 1, at most `max`; anything else is `fallback`. */
+export function pageSize(raw: unknown, fallback: number, max: number) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), max) : fallback;
+}

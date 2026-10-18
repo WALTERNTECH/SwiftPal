@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { Icon, type IconName } from "@/components/Icon";
 import { LogoMark } from "@/components/Logo";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
-import { api, clearCache, needsCodes, nextStep, useAccount, useApi, useMe, useMode, usePayments, usePayouts, type Me } from "@/lib/api";
+import { api, can, clearCache, needsCodes, nextStep, useAccount, useApi, useMe, useMode, usePayments, usePayouts, type Me, type Perm } from "@/lib/api";
 import { money, timeAgo } from "@/lib/format";
 import { ActionsProvider, useActions, type Action } from "./actions";
 import { CommandPalette } from "./CommandPalette";
@@ -71,11 +71,25 @@ function Shell({ children }: { children: ReactNode }) {
       {navOpen && <div className="side-scrim" onClick={() => setNavOpen(false)} />}
       <div className="dash-main">
         <Topbar onMenu={() => setNavOpen(true)} onSearch={() => setCmdk(true)} />
+        <Announcement />
         <main className="dash-content" key={path}>
           {children}
         </main>
       </div>
       <CommandPalette open={cmdk} onClose={() => setCmdk(false)} />
+    </div>
+  );
+}
+
+/** A notice from SwiftPal operations (maintenance, an M-Pesa outage), set in the console. */
+function Announcement() {
+  const me = useAccount();
+  const a = me.announcement;
+  if (!a) return null;
+  return (
+    <div className={`announce ${a.tone}`} role="status">
+      <Icon name={a.tone === "warning" ? "alert" : "info"} size={15} />
+      <span>{a.text}</span>
     </div>
   );
 }
@@ -144,7 +158,9 @@ function Sidebar({ open }: { open: boolean }) {
 
       <nav className="side-nav" aria-label="Dashboard" ref={navRef}>
         {bar && <span className="nav-bar" style={{ transform: `translateY(${bar.top}px)`, height: bar.height }} />}
-        {NAV.map((g, i) => (
+        {NAV.map((g) => ({ ...g, items: g.items.filter((n) => !n.perm || can(me, n.perm)) }))
+          .filter((g) => g.items.length)
+          .map((g, i) => (
           <div key={i} className="side-group">
             {g.label && <div className="side-label">{g.label}</div>}
             {g.items.map((n) => (
@@ -179,12 +195,13 @@ function Sidebar({ open }: { open: boolean }) {
   );
 }
 
-const NEW_ITEMS: { a: Action; label: string; icon: IconName }[] = [
-  { a: "payment", label: "Request payment", icon: "collect" },
-  { a: "payout", label: "Send payout", icon: "payout" },
-  { a: "topup-fee", label: "Top up wallet", icon: "wallet" },
-  { a: "channel", label: "Add Till or Paybill", icon: "channel" },
-  { a: "key", label: "Create API key", icon: "key" },
+const NEW_ITEMS: { a: Action | "link"; label: string; icon: IconName; perm: Perm }[] = [
+  { a: "payment", label: "Request payment", icon: "collect", perm: "collect" },
+  { a: "link", label: "Create payment link", icon: "link", perm: "collect" },
+  { a: "payout", label: "Send payout", icon: "payout", perm: "money" },
+  { a: "topup-fee", label: "Top up wallet", icon: "wallet", perm: "money" },
+  { a: "channel", label: "Add Till or Paybill", icon: "channel", perm: "settings" },
+  { a: "key", label: "Create API key", icon: "key", perm: "developers" },
 ];
 
 function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void }) {
@@ -249,8 +266,8 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
           </button>
           {menu === "new" && (
             <div className="pop" role="menu">
-              {NEW_ITEMS.map((n) => (
-                <button key={n.a} role="menuitem" onClick={() => { setMenu(null); open(n.a); }}>
+              {NEW_ITEMS.filter((n) => can(me, n.perm)).map((n) => (
+                <button key={n.a} role="menuitem" onClick={() => { setMenu(null); if (n.a === "link") router.push("/dashboard/links?new=1"); else open(n.a); }}>
                   <span className="pop-ic"><Icon name={n.icon} size={14} /></span>
                   {n.label}
                 </button>

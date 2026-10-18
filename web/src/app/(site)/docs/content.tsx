@@ -59,6 +59,12 @@ const ERRORS: [number, string, string][] = [
   [403, "payouts_not_enabled", "B2C needs a verified account. Complete Verification in the dashboard."],
   [402, "insufficient_fee_credit", "Fee credit cannot cover the held fee. Top up, or turn on auto-cover from payout float."],
   [409, "insufficient_float", "Payout float is lower than the payout amount."],
+  [403, "daily_limit_reached", "This payout would pass the account's daily limit for live payouts, refunds and withdrawals. It resets at midnight East Africa Time; contact support to raise it."],
+  [409, "refund_exceeds_payment", "Refunds on a payment add up to at most what was paid. The message says how much is left."],
+  [409, "not_refundable", "Only successful payments can be refunded."],
+  [403, "account_suspended", "The account is suspended. Contact SwiftPal support."],
+  [503, "payouts_paused", "Payouts are paused for maintenance. Nothing was sent; retry later."],
+  [503, "payments_paused", "Payment prompts are paused for maintenance. Nothing was sent; retry later."],
   [409, "idempotency_conflict", "This Idempotency-Key was already used with a different request body."],
   [429, "rate_limited", `More than ${SITE.rateLimitPerMinute} requests a minute on this key. Respect the Retry-After header.`],
   [503, "mpesa_unavailable", "Safaricom is not accepting requests right now. Nothing was charged. Retry with backoff."],
@@ -81,7 +87,9 @@ const FAQ: [string, string][] = [
   ["Where do customer payments settle?", "In the Paybill or Till you registered, the same as a payment made from the M-Pesa menu."],
   ["What happens when fee credit runs out?", "Requests return 402 insufficient_fee_credit. Turn on auto-cover to take fees from payout float instead, and set a low-balance alert in the dashboard."],
   ["What do I need to go live?", "A verified account: national ID and a selfie holding it for individuals; certificate of incorporation, CR12 and a director's ID for businesses. Once it's approved, add your Till or Paybill and create an API key."],
-  ["Can I withdraw payout float?", "Yes, to the M-Pesa number on your account, at the normal B2C fee for the amount."],
+  ["Can I withdraw payout float?", "Yes, to the account owner's verified M-Pesa number, at the normal B2C fee for the amount. Withdrawals and payouts from the dashboard need two-step verification."],
+  ["Can I take payments without writing code?", "Yes. Create a payment link in the dashboard and share it on WhatsApp, Instagram or as a printed QR code. Customers enter their number and approve the prompt; the money lands in your Till or Paybill."],
+  ["Can my team use the account?", "Yes. Invite people as Admin, Finance, Developer or Support from Settings → Team. Each role only changes what its job needs."],
   ["How do I test before launch?", "Send yourself a small real payment. STK Push under KES 10 has no SwiftPal fee, so a KES 1 prompt to your own phone costs nothing but the shilling, and it lands in your own till."],
 ];
 
@@ -287,6 +295,20 @@ export const DOCS: DocPage[] = [
         <p>
           The amount comes off payout float and the fee comes off fee credit when we accept the request. If M-Pesa rejects
           the payout, both are returned and you receive <C>payout.failed</C>.
+        </p>
+        <h2>Refunds</h2>
+        <Endpoint method="POST" path="/v1/payments/{id}/refunds" />
+        <p>
+          Sends money back to the phone that paid, as a B2C payout from your float at the normal payout fee. Leave out{" "}
+          <C>amount</C> to refund what&apos;s left, or send part of it; refunds on one payment add up to at most what was paid.
+          The payout carries <C>refund_of</C> with the payment id, and you get the usual <C>payout.*</C> webhooks. Needs the{" "}
+          <C>payouts:write</C> scope. <C>GET</C> the same path to list a payment&apos;s refunds.
+        </p>
+        <CodeBlock tabs={[{ label: "Request body", lang: "json", code: `{ "amount": 400 }` }]} />
+        <h2>Daily limit</h2>
+        <p>
+          Live payouts, refunds and withdrawals share a daily limit per account (KES 500,000 unless agreed otherwise), reset at
+          midnight East Africa Time. A payout past it gets <C>403 daily_limit_reached</C>; nothing is reserved.
         </p>
         <h2>Bulk payouts</h2>
         <Endpoint method="POST" path="/v1/payouts/batches" />

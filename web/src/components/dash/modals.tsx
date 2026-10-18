@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
-import { api, invalidate, useAccount, useMode, usePaymentWatch, type ApiError, type Payment, type Payout } from "@/lib/api";
+import { api, can, invalidate, useAccount, useApi, useMode, usePaymentWatch, type ApiError, type Payment, type Payout } from "@/lib/api";
 import { dateTime, fee, maskPhone, money, money2, normalisePhone, phoneHint } from "@/lib/format";
 import { b2cFee, stkFee } from "@/lib/pricing";
-import { SmsConfirm } from "./SmsConfirm";
-import { Drawer, KV, Modal, PayBadge, useToast } from "./ui";
+import { ActionError, SmsConfirm, type Confirmation } from "./SmsConfirm";
+import { Drawer, KV, Modal, PayBadge, PayoutBadge, useToast } from "./ui";
 
 const REASONS = ["withdrawal", "salary", "refund", "commission", "promotion", "other"];
 
@@ -142,8 +142,137 @@ export function PaymentDrawer({ id, onClose }: { id: string | null; onClose: () 
           {p.status === "failed" && <li><span className="pt bad" /><span>{failure} · fee released</span><time>{p.completed_at && time(p.completed_at)}</time></li>}
         </ol>
       </div>
+      {p.status === "succeeded" && p.livemode && <Refunds payment={p} />}
       <CodeBlock tabs={[{ label: "GET /v1/stk-push/" + p.id.slice(0, 10) + "…", lang: "json", code: json }]} />
     </Drawer>
+  );
+}
+
+// ---------- refunds ----------
+/** Money sent back to the paying phone from the payout float, in parts if needed. */
+function Refunds({ payment }: { payment: Payment }) {
+  const me = useAccount();
+  const { data: refunds } = useApi<Payout[]>(`/app/payments/${payment.id}/refunds`);
+  const [open, setOpen] = useState(false);
+  const sent = (refunds ?? []).filter((r) => r.status !== "failed" && r.status !== "reversed").reduce((t, r) => t + r.amount, 0);
+  const left = payment.amount - sent;
+  return (
+    <div>
+      <div className="spread" style={{ marginBottom: 10 }}>
+        <div className="eyebrow">Refunds</div>
+        {can(me, "money") && left >= 10 && (
+          <button className="btn btn-line btn-sm" onClick={() => setOpen(true)}>
+            <Icon name="undo" size={14} /> Refund
+          </button>
+        )}
+      </div>
+      {refunds?.length ? (
+        <div className="stack" style={{ gap: 8 }}>
+          {refunds.map((r) => (
+            <div key={r.id} className="spread" style={{ fontSize: 13.5 }}>
+              <span className="num">{money(r.amount)}</span>
+              <span className="row" style={{ gap: 8 }}>
+                <span className="muted">{dateTime(r.created_at)}</span>
+                <PayoutBadge s={r.status} />
+              </span>
+            </div>
+          ))}
+          <p className="hint">{left > 0 ? `${money(left)} can still be refunded.` : "Fully refunded."}</p>
+        </div>
+      ) : (
+        <p className="hint">Send all or part of this payment back to {maskPhone(payment.phone)} from your payout float.</p>
+      )}
+      <RefundModal open={open} onClose={() => setOpen(false)} payment={payment} left={left} />
+    </div>
+  );
+}
+
+function RefundModal({ open, onClose, payment, left }: { open: boolean; onClose: () => void; payment: Payment; left: number }) {
+  const toast = useToast();
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError | string | null>(null);
+  const [conf, setConf] = useState<Confirmation | null>(null);
+  useEffect(() => {
+    if (open) {
+      setAmount(String(left));
+      setError(null);
+      setBusy(false);
+      setConf(null);
+    }
+  }, [open, left]);
+  const amt = Math.floor(Number(amount) || 0);
+  const f = b2cFee(amt);
+  const body = { action: "refund", mode: "live", payment: payment.id, amount: amt };
+
+  async function send(code?: string) {
+    await api<Payout>(`/app/payments/${payment.id}/refund`, { body: { mode: "live", amount: amt, code } });
+    invalidate(`/app/payments/${payment.id}`, "/app/payouts", "/app/me", "/app/wallet", "/app/ledger");
+    toast(`${money(amt)} refund on its way to ${maskPhone(payment.phone)}`);
+    onClose();
+  }
+
+  async function start() {
+    if (amt < 10) return setError("M-Pesa sends refunds from KES 10.");
+    if (amt > left) return setError(`At most ${money(left)} can be refunded.`);
+    setBusy(true);
+    setError(null);
+    try {
+      const c = await api<Confirmation>("/app/confirmations", { body });
+      if (c.required) setConf(c);
+      else await send();
+    } catch (err) {
+      setError(err as ApiError);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Refund payment"
+      footer={
+        conf ? (
+          <button className="btn btn-line" onClick={() => setConf(null)}>Back</button>
+        ) : (
+          <>
+            <button className="btn btn-line" onClick={onClose}>Cancel</button>
+            <button className="btn btn-pine" disabled={busy} onClick={start}>
+              {busy ? <span className="spinner" /> : "Continue"}
+            </button>
+          </>
+        )
+      }
+    >
+      {conf ? (
+        <SmsConfirm conf={conf} summary={`Refund ${money(amt)} to ${maskPhone(payment.phone)}`} onCode={send} onResend={() => api("/app/confirmations", { body })} />
+      ) : (
+        <>
+          <div className="field">
+            <div className="label-row">
+              <label className="label" htmlFor="rf-amt">Amount</label>
+              <button className="text-btn" onClick={() => setAmount(String(left))}>
+                Full {money(left)}
+              </button>
+            </div>
+            <div className="input-group">
+              <span className="prefix">KES</span>
+              <input id="rf-amt" className="input mono" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} />
+            </div>
+          </div>
+          <KV
+            rows={[
+              ["To", <span key="p" className="mono">{maskPhone(payment.phone)}</span>],
+              ["Original payment", <span key="o" className="num">{money(payment.amount)} · {payment.mpesa_receipt}</span>],
+              ["Fee", f === null ? "—" : <span key="f" className="num">{money(f)}</span>],
+            ]}
+          />
+          <p className="hint">Refunds go out as M-Pesa B2C from your payout float. Your SwiftPal fee on the original payment isn't returned.</p>
+          <ActionError error={error} />
+        </>
+      )}
+    </Modal>
   );
 }
 
@@ -260,8 +389,6 @@ export function TopUpModal({ open, onClose, initial = "fee" }: { open: boolean; 
 }
 
 // ---------- withdraw ----------
-type Confirmation = { required: boolean; phone_hint?: string };
-
 export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const me = useAccount();
   const mode = useMode();
@@ -270,14 +397,14 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const float = bal.payout_float.available;
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [hint, setHint] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | string | null>(null);
+  const [conf, setConf] = useState<Confirmation | null>(null);
   useEffect(() => {
     if (open) {
       setAmount("");
-      setError("");
+      setError(null);
       setBusy(false);
-      setHint(null);
+      setConf(null);
     }
   }, [open]);
   const amt = Math.floor(Number(amount) || 0);
@@ -287,25 +414,25 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   async function send(code?: string) {
     await api<Payout>("/app/wallet/withdraw", { body: { mode, amount: amt, code } });
     invalidate("/app/me", "/app/wallet", "/app/ledger", "/app/payouts");
-    toast(`${money(amt)} on its way to ${maskPhone(me.user.phone)}`);
+    toast(`${money(amt)} on its way to ${me.withdraw_to}`);
     onClose();
   }
 
-  /** Live withdrawals are confirmed with a code texted to the account's number. */
+  /** Live withdrawals are confirmed with the authenticator app (or an SMS code where that's on). */
   async function start() {
     if (f === null) return setError("Withdraw between KES 10 and KES 250,000.");
     if (amt > float) return setError(`You have ${money(float)} available.`);
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       if (mode === "test") await send();
       else {
         const c = await api<Confirmation>("/app/confirmations", { body: { action: "withdraw", mode, amount: amt } });
-        if (c.required) setHint(c.phone_hint!);
+        if (c.required) setConf(c);
         else await send();
       }
     } catch (err) {
-      setError((err as ApiError).message);
+      setError(err as ApiError);
     }
     setBusy(false);
   }
@@ -316,8 +443,8 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       onClose={onClose}
       title="Withdraw payout float"
       footer={
-        hint ? (
-          <button className="btn btn-line" onClick={() => setHint(null)}>Back</button>
+        conf ? (
+          <button className="btn btn-line" onClick={() => setConf(null)}>Back</button>
         ) : (
           <>
             <button className="btn btn-line" onClick={onClose}>Cancel</button>
@@ -328,10 +455,10 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
         )
       }
     >
-      {hint ? (
+      {conf ? (
         <SmsConfirm
-          hint={hint}
-          summary={`Withdraw ${money(amt)} to ${phoneHint(me.user.phone)}`}
+          conf={conf}
+          summary={`Withdraw ${money(amt)} to ${me.withdraw_to}`}
           onCode={send}
           onResend={() => api("/app/confirmations", { body: { action: "withdraw", mode, amount: amt } })}
         />
@@ -351,12 +478,12 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           </div>
           <KV
             rows={[
-              ["To", <span key="p" className="mono">{phoneHint(me.user.phone)}</span>],
+              ["To", <span key="p" className="mono">{me.withdraw_to}</span>],
               ["Fee", f === null ? "—" : <span key="f" className="num">{money(f)}</span>],
             ]}
           />
-          <p className="hint">Withdrawals only go to your verified number.</p>
-          {error && <div className="form-error">{error}</div>}
+          <p className="hint">Withdrawals only go to the account owner&apos;s verified number.</p>
+          <ActionError error={error} />
         </>
       )}
     </Modal>
@@ -372,16 +499,16 @@ export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => v
   const [reference, setReference] = useState("");
   const [reason, setReason] = useState("withdrawal");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [hint, setHint] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | string | null>(null);
+  const [conf, setConf] = useState<Confirmation | null>(null);
   useEffect(() => {
     if (open) {
       setPhone("");
       setAmount("1500");
       setReference(`WD-${Math.floor(Math.random() * 90000 + 10000)}`);
-      setError("");
+      setError(null);
       setBusy(false);
-      setHint(null);
+      setConf(null);
     }
   }, [open, mode]);
   const amt = Math.floor(Number(amount) || 0);
@@ -400,17 +527,16 @@ export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => v
     if (!to) return setError("Enter a Safaricom number.");
     if (f === null) return setError("Payouts run from KES 10 to KES 250,000.");
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       if (mode === "test") await send();
       else {
         const c = await api<Confirmation>("/app/confirmations", { body: { action: "payout", ...body } });
-        if (c.required) setHint(c.phone_hint!);
+        if (c.required) setConf(c);
         else await send();
       }
     } catch (err) {
-      const e = err as ApiError;
-      setError(e.message);
+      setError(err as ApiError);
     }
     setBusy(false);
   }
@@ -421,8 +547,8 @@ export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => v
       onClose={onClose}
       title="Send a payout"
       footer={
-        hint ? (
-          <button className="btn btn-line" onClick={() => setHint(null)}>Back</button>
+        conf ? (
+          <button className="btn btn-line" onClick={() => setConf(null)}>Back</button>
         ) : (
           <>
             <button className="btn btn-line" onClick={onClose}>Cancel</button>
@@ -433,9 +559,9 @@ export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => v
         )
       }
     >
-      {hint ? (
+      {conf ? (
         <SmsConfirm
-          hint={hint}
+          conf={conf}
           summary={`Send ${money(amt)} to ${to}`}
           onCode={send}
           onResend={() => api("/app/confirmations", { body: { action: "payout", ...body } })}
@@ -468,7 +594,7 @@ export function PayoutModal({ open, onClose }: { open: boolean; onClose: () => v
             <input id="po-ref" className="input mono" maxLength={32} value={reference} onChange={(e) => setReference(e.target.value)} />
           </div>
           <KV rows={[["Fee", f === null ? "—" : <span key="f" className="num">{money(f)}</span>]]} />
-          {error && <div className="form-error">{error}</div>}
+          <ActionError error={error} />
         </>
       )}
     </Modal>

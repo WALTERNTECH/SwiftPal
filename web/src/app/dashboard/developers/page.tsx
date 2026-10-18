@@ -6,7 +6,7 @@ import { CopyButton } from "@/components/CodeBlock";
 import { Icon } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { Integrate } from "@/components/dash/Integrate";
-import { Empty, PageHeader, useToast } from "@/components/dash/ui";
+import { Empty, Modal, PageHeader, useToast } from "@/components/dash/ui";
 import { api, invalidate, useAccount, useApi, useMode, type ApiError, type ApiKey } from "@/lib/api";
 import { dateTime, timeAgo } from "@/lib/format";
 import { SITE } from "@/lib/site";
@@ -18,15 +18,24 @@ export default function ApiKeys() {
   const { open } = useActions();
   const [shown, setShown] = useState<Record<string, boolean>>({});
   const [fresh, setFresh] = useState<{ name: string; secret: string } | null>(null);
+  // Rolling a live key issues a new secret, so it takes the authenticator code when two-step is on.
+  const [rolling, setRolling] = useState<ApiKey | null>(null);
+  const [rollCode, setRollCode] = useState("");
   const { data: all, loading } = useApi<ApiKey[]>("/app/keys");
   const keys = (all ?? []).filter((k) => k.mode === mode);
   const liveLocked = mode === "live" && !me.merchant.live_enabled;
 
-  async function roll(k: ApiKey) {
-    if (!confirm(`Roll "${k.name}"? A new secret is issued and the old one stops working immediately.`)) return;
+  async function roll(k: ApiKey, code?: string) {
+    if (k.mode === "live" && me.user.two_factor && !code) {
+      setRollCode("");
+      setRolling(k);
+      return;
+    }
+    if (!code && !confirm(`Roll "${k.name}"? A new secret is issued and the old one stops working immediately.`)) return;
     try {
-      const r = await api<{ id: string; secret: string }>(`/app/keys/${k.id}/roll`, { method: "POST" });
+      const r = await api<{ id: string; secret: string }>(`/app/keys/${k.id}/roll`, { body: { code } });
       invalidate("/app/keys");
+      setRolling(null);
       setFresh({ name: k.name, secret: r.secret });
       toast("Key rolled. Copy the new secret now.");
     } catch (err) {
@@ -156,6 +165,20 @@ export default function ApiKeys() {
           </p>
         </div>
       </div>
+      <Modal
+        open={!!rolling}
+        onClose={() => setRolling(null)}
+        title={`Roll "${rolling?.name ?? ""}"`}
+        footer={
+          <>
+            <button className="btn btn-line" onClick={() => setRolling(null)}>Cancel</button>
+            <button className="btn btn-pine" disabled={rollCode.length !== 6} onClick={() => rolling && roll(rolling, rollCode)}>Roll key</button>
+          </>
+        }
+      >
+        <p className="muted" style={{ fontSize: 13.5 }}>A new secret is issued and the old one stops working immediately. Enter the code from your authenticator app.</p>
+        <input className="input mono" inputMode="numeric" autoComplete="one-time-code" maxLength={6} aria-label="Code" value={rollCode} onChange={(e) => setRollCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))} />
+      </Modal>
     </>
   );
 }

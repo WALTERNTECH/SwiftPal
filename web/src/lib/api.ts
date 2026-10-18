@@ -11,7 +11,20 @@ export type Mode = "test" | "live";
 export type Account = "fee" | "float";
 
 // ---------- shapes returned by the API ----------
-export type User = { id: string; email: string; phone: string; first_name: string; last_name: string; role: string; email_verified_at: string | null; phone_verified_at: string | null; created_at: string };
+export type Role = "owner" | "admin" | "developer" | "finance" | "support";
+export type Perm = "collect" | "money" | "developers" | "settings" | "team";
+export type User = {
+  id: string;
+  email: string;
+  phone: string;
+  first_name: string;
+  last_name: string;
+  role: Role;
+  email_verified_at: string | null;
+  phone_verified_at: string | null;
+  two_factor: boolean;
+  created_at: string;
+};
 export type Merchant = {
   id: string;
   account_code: string;
@@ -62,7 +75,42 @@ export type Me = {
   /** One-time codes at sign-up and sign-in; off until SMS and email are set up. */
   codes: boolean;
   pending: Partial<Record<Mode, number>>;
+  /** What this person's role may change; everyone can read. */
+  permissions: Perm[];
+  /** A notice from SwiftPal shown across the dashboard (maintenance, incidents). */
+  announcement: { text: string; tone: "info" | "warning" } | null;
+  limits: { payout_daily: number; sent_today: number };
+  /** Negotiated prices; null means the standard bands. */
+  pricing: { stk_fee: number | null; b2c_fee_pct: number | null };
+  /** The owner's verified number, masked: where withdrawals go. */
+  withdraw_to: string;
 };
+
+export const can = (me: Me, perm: Perm) => me.permissions.includes(perm);
+
+export type PaymentLink = {
+  id: string;
+  url: string;
+  slug: string;
+  title: string;
+  description: string | null;
+  amount: number | null;
+  reference: string;
+  channel: string | null;
+  active: boolean;
+  paid_count: number;
+  paid_total: number;
+  created_at: string;
+};
+export type SessionRow = { id: string; ip: string | null; user_agent: string | null; created_at: string; last_seen_at: string; current: boolean };
+export type SecurityState = {
+  two_factor: { enabled: boolean; enabled_at: string | null; recovery_codes_left: number };
+  sessions: SessionRow[];
+  password_changed_at: string | null;
+};
+export type ActivityRow = { id: number; kind: string; detail: Record<string, unknown>; ip: string | null; user_agent: string | null; created_at: string; first_name: string | null; last_name: string | null; email: string | null };
+export type Member = { id: string; email: string; first_name: string; last_name: string; role: Role; two_factor: boolean; created_at: string; last_active_at: string | null };
+export type Invite = { id: string; email: string; role: Role; created_at: string; expires_at: string };
 export type PayStatus = "pending" | "succeeded" | "failed" | "cancelled" | "expired";
 export type Payment = {
   id: string;

@@ -109,3 +109,10 @@ export async function one<T extends Row>(q: Q, sql: string, params?: unknown[]):
   const { rows } = await q.query<T>(sql, params);
   return rows[0] ?? null;
 }
+
+// Kenya has no daylight saving: a Nairobi day is a UTC day shifted by three hours.
+// Both are written against UTC explicitly, so the session's TimeZone setting doesn't matter.
+/** The start of today in Nairobi, as a timestamptz. */
+export const NAIROBI_TODAY = `((date_trunc('day', now() at time zone 'UTC' + interval '3 hours') - interval '3 hours') at time zone 'UTC')`;
+/** A column's Nairobi calendar day as YYYY-MM-DD. */
+export const nairobiDay = (col: string) => `to_char(${col} at time zone 'UTC' + interval '3 hours', 'YYYY-MM-DD')`;

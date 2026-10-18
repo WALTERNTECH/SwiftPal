@@ -543,3 +543,33 @@
 .connect-code span { font-size: 12px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--font-mono); }
 .connect-code b { font-size: 26px; letter-spacing: 0.12em; color: var(--ink); }
 .connect-code em { font-style: normal; font-size: 12.5px; color: var(--ink-3); }
+
+/* ================= Payment link page ================= */
+.paypage { position: relative; min-height: 100vh; display: grid; background: var(--paper-2); isolation: isolate; }
+.pay-center { display: grid; justify-items: center; align-content: center; gap: 16px; padding: 32px 16px 48px; }
+.pay-card {
+  width: 100%; max-width: 420px; padding: 28px; display: grid; gap: 20px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(10, 13, 12, 0.04), 0 22px 48px -24px rgba(10, 13, 12, 0.28);
+  animation: fade-up 0.45s var(--ease) both;
+}
+.pay-merchant { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.pay-merchant b { display: block; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.pay-mono { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; border-radius: 12px; color: #fff; font-weight: 600; font-size: 15px; letter-spacing: 0.02em; background: linear-gradient(145deg, #22c37e, #0a8f55 55%, #066e41); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 14px -6px rgba(6, 110, 65, 0.55); }
+.pay-verified { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 12px; font-weight: 500; color: var(--pine-ink); }
+.pay-head { display: grid; gap: 6px; }
+.pay-head h1 { font-size: 21px; font-weight: 600; letter-spacing: -0.02em; }
+.pay-head p { font-size: 14px; line-height: 1.5; }
+.pay-amount { font-family: var(--font-mono); font-size: 34px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink); }
+.pay-amount small { font-size: 14px; color: var(--ink-3); margin-right: 6px; font-weight: 500; }
+.pay-state { display: grid; justify-items: center; gap: 10px; text-align: center; padding: 12px 0; }
+.pay-state h1 { font-size: 21px; font-weight: 600; letter-spacing: -0.02em; }
+.pay-state p { font-size: 14px; line-height: 1.5; }
+.pay-ring { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--sunken); color: var(--ink-2); }
+.pay-ring.ok { background: var(--pine-wash); color: var(--pine-ink); box-shadow: 0 0 0 6px color-mix(in srgb, var(--pine-wash) 50%, transparent); }
+.pay-ring.neutral { background: var(--sunken); }
+.pay-receipt { display: grid; gap: 2px; padding: 12px 18px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line); }
+.pay-receipt span { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+.pay-receipt b { font-size: 18px; letter-spacing: 0.06em; }
+.pay-foot { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-4); }
+@media (max-width: 520px) { .pay-card { padding: 22px 18px; border-radius: 16px; } .pay-amount { font-size: 30px; } }

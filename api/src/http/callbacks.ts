@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { App } from "../app.js";
 import { ApiError, safeEqual } from "../lib.js";
 import { parseB2cResult, parseB2cTimeout, parseStkCallback } from "../mpesa/callbacks.js";
@@ -12,12 +12,18 @@ import { handleB2cResult } from "../services/payouts.js";
  */
 export function callbackRoutes(api: FastifyInstance, app: App) {
   const ACK = { ResultCode: 0, ResultDesc: "Accepted" };
-  const gate = (token: string) => {
+  const gate = (req: FastifyRequest) => {
+    const token = (req.params as { token: string }).token;
     if (!app.cfg.callbackToken || !safeEqual(token, app.cfg.callbackToken)) throw new ApiError(404, "not_found", "Not found.", "not_found");
+    // With DARAJA_CALLBACK_IPS set, a leaked token alone can't post a result.
+    if (app.cfg.callbackIps.length && !app.cfg.callbackIps.includes(req.clientIp)) {
+      app.log.warn(`daraja callback refused from ${req.clientIp}`);
+      throw new ApiError(404, "not_found", "Not found.", "not_found");
+    }
   };
 
   api.post("/callbacks/daraja/stk/:token", async (req) => {
-    gate((req.params as { token: string }).token);
+    gate(req);
     const r = parseStkCallback(req.body);
     if (!r) {
       await app.db.query(`insert into daraja_callbacks (kind, payload, outcome) values ('stk', $1, 'unparsed')`, [JSON.stringify(req.body ?? null)]);
@@ -33,7 +39,7 @@ export function callbackRoutes(api: FastifyInstance, app: App) {
 
   for (const kind of ["result", "timeout"] as const) {
     api.post(`/callbacks/daraja/b2c-${kind}/:token`, async (req) => {
-      gate((req.params as { token: string }).token);
+      gate(req);
       const r = kind === "result" ? parseB2cResult(req.body) : parseB2cTimeout(req.body);
       if (!r) {
         await app.db.query(`insert into daraja_callbacks (kind, payload, outcome) values ($1, $2, 'unparsed')`, [`b2c_${kind}`, JSON.stringify(req.body ?? null)]);
@@ -49,4 +55,3 @@ export function callbackRoutes(api: FastifyInstance, app: App) {
   }
 }
 
-/** Review endpoints for the admin console, behind ADMIN_TOKEN until that console exists. */

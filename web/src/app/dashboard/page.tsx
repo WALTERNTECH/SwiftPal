@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { Icon, type IconName } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { AreaChart, CountUp, Delta, kes, Sparkline, SuccessRing } from "@/components/dash/charts";
-import { useAccount, useApi, useMode, usePayments, usePayouts, type Analytics, type ApiKey, type Endpoint, type Summary } from "@/lib/api";
+import { can, useAccount, useApi, useMode, usePayments, usePayouts, type Analytics, type ApiKey, type Endpoint, type Summary } from "@/lib/api";
 import { dayLabel, delta, maskPhone, money, timeAgo } from "@/lib/format";
 
 type Range = 7 | 14 | 30;
@@ -21,8 +21,10 @@ export default function Overview() {
   const { data: span } = useApi<Analytics>(`/app/analytics?mode=${mode}&days=${range}`);
   const { data: payments = [], loading } = usePayments(mode);
   const { data: payouts = [] } = usePayouts(mode);
-  const { data: hooks = [] } = useApi<Endpoint[]>(`/app/webhooks?mode=${mode}`);
-  const { data: keys = [] } = useApi<ApiKey[]>("/app/keys");
+  // Keys and webhooks carry secrets, so only roles that manage them load them.
+  const dev = can(me, "developers");
+  const { data: hooks = [] } = useApi<Endpoint[]>(dev ? `/app/webhooks?mode=${mode}` : null);
+  const { data: keys = [] } = useApi<ApiKey[]>(dev ? "/app/keys" : null);
   const bal = me.balances[mode];
   const cur = week?.current ?? ZERO;
   const prev = week?.previous ?? ZERO;
@@ -129,13 +131,15 @@ export default function Overview() {
               <div className="bal-meta">withdrawable{bal.payout_float.held > 0 && ` · ${money(bal.payout_float.held)} held`}</div>
             </div>
           </div>
-          <div className="bal-actions">
-            <button className="btn btn-pine" onClick={() => open("topup-fee")}>
-              <Icon name="plus" size={14} /> Top up
-            </button>
-            <button className="btn btn-line" onClick={() => open("topup-float")}>Fund float</button>
-            <button className="btn btn-line" onClick={() => open("withdraw")}>Withdraw</button>
-          </div>
+          {can(me, "money") && (
+            <div className="bal-actions">
+              <button className="btn btn-pine" onClick={() => open("topup-fee")}>
+                <Icon name="plus" size={14} /> Top up
+              </button>
+              <button className="btn btn-line" onClick={() => open("topup-float")}>Fund float</button>
+              <button className="btn btn-line" onClick={() => open("withdraw")}>Withdraw</button>
+            </div>
+          )}
         </section>
 
         <section className="panel setup rise" style={{ ["--d" as string]: "80ms" }}>

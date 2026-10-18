@@ -7,10 +7,14 @@ import { PageHeader } from "@/components/dash/ui";
 import { FeeCalculator } from "@/components/site/FeeCalculator";
 import { fee, money2, num } from "@/lib/format";
 import { b2cFee, B2C_BANDS, STK_BANDS } from "@/lib/pricing";
-import { useApi, useMode, type Analytics } from "@/lib/api";
+import { can, useAccount, useApi, useMode, type Analytics } from "@/lib/api";
 
 export default function DashPricing() {
+  const me = useAccount();
   const mode = useMode();
+  // Negotiated prices from SwiftPal replace the standard ones shown below.
+  const deal = me.pricing;
+  const stk = deal.stk_fee ?? STK_BANDS[1].flat!;
   const { open } = useActions();
   const [probe, setProbe] = useState("3500");
   const probeAmt = Number(probe) || 0;
@@ -26,18 +30,31 @@ export default function DashPricing() {
         title="Pricing"
         sub="Rates on your account. Fees come from fee credit."
         actions={
-          <button className="btn btn-pine" onClick={() => open("topup-fee")}>
-            <Icon name="plus" size={14} /> Top up fee credit
-          </button>
+          can(me, "money") && (
+            <button className="btn btn-pine" onClick={() => open("topup-fee")}>
+              <Icon name="plus" size={14} /> Top up fee credit
+            </button>
+          )
         }
       />
+
+      {(deal.stk_fee !== null || deal.b2c_fee_pct !== null) && (
+        <div className="callout pine rise">
+          <Icon name="tag" size={16} />
+          <span>
+            <b>Your account has custom pricing.</b>{" "}
+            {deal.stk_fee !== null && <>STK Push is KES {deal.stk_fee.toFixed(2)} per successful payment. </>}
+            {deal.b2c_fee_pct !== null && <>B2C payouts are {deal.b2c_fee_pct}% of the standard band fee.</>}
+          </span>
+        </div>
+      )}
 
       <div className="grid-3">
         <section className="stat rise" style={{ padding: 20 }}>
           <div className="stat-label">
             <span className="stat-ic"><Icon name="collect" size={13} /></span> STK Push
           </div>
-          <div className="stat-val" style={{ fontSize: 34 }}>KES {STK_BANDS[1].flat!.toFixed(2)}</div>
+          <div className="stat-val" style={{ fontSize: 34 }}>KES {stk.toFixed(2)}</div>
           <span className="muted" style={{ fontSize: 12.5 }}>per successful payment · free under KES 10</span>
         </section>
         <section className="stat rise" style={{ padding: 20, ["--d" as string]: "60ms" }}>

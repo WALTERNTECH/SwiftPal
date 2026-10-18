@@ -394,4 +394,102 @@ alter table merchants add column suspended_at timestamptz;
 alter table merchants add column suspended_reason text;
 `,
   },
+  {
+    id: "006_security_and_growth",
+    sql: `
+-- Two-step sign-in with an authenticator app, and one-time recovery codes.
+alter table users add column totp_secret_enc text;
+alter table users add column totp_pending_enc text;
+alter table users add column totp_enabled_at timestamptz;
+alter table users add column totp_last_step bigint;
+alter table users add column password_changed_at timestamptz;
+alter table users add column disabled_at timestamptz;
+create table recovery_codes (
+  id bigint generated always as identity primary key,
+  user_id text not null references users(id) on delete cascade,
+  code_hash text not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index recovery_codes_user on recovery_codes(user_id);
+
+-- Sessions a person can see and end. The token hash stays private; id is what the dashboard sees.
+alter table sessions add column id text not null default gen_random_uuid()::text;
+alter table sessions add column last_seen_at timestamptz;
+create unique index sessions_id on sessions(id);
+
+-- Security activity a merchant can review: sign-ins, password and 2FA changes, keys, team.
+create table account_events (
+  id bigint generated always as identity primary key,
+  merchant_id text not null references merchants(id),
+  user_id text references users(id) on delete set null,
+  kind text not null,
+  detail jsonb not null default '{}',
+  ip text,
+  user_agent text,
+  created_at timestamptz not null default now()
+);
+create index account_events_merchant on account_events(merchant_id, created_at desc);
+
+-- Team members join by invite link; roles limit what each can do.
+create table invites (
+  id text primary key,
+  token_hash text not null unique,
+  merchant_id text not null references merchants(id),
+  email text not null,
+  role text not null check (role in ('admin','developer','finance','support')),
+  invited_by text references users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  accepted_at timestamptz,
+  revoked_at timestamptz
+);
+create index invites_merchant on invites(merchant_id, created_at desc);
+
+-- Payment links: a page anyone can pay from, no code needed.
+create table payment_links (
+  id text primary key,
+  merchant_id text not null references merchants(id),
+  slug text not null unique,
+  title text not null,
+  description text,
+  amount bigint check (amount is null or (amount between 1 and 250000)),
+  reference text not null,
+  channel_id text references channels(id),
+  active boolean not null default true,
+  created_by text references users(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index payment_links_merchant on payment_links(merchant_id, created_at desc);
+alter table payments add column link_id text references payment_links(id);
+create index payments_link on payments(link_id) where link_id is not null;
+
+-- Refunds go out as B2C payouts tied to the payment they return.
+alter table payouts add column refund_of text references payments(id);
+create index payouts_refund_of on payouts(refund_of) where refund_of is not null;
+
+-- Risk limits and negotiated pricing, set from the console. Null means the platform default.
+alter table merchants add column payout_daily_limit_cents bigint check (payout_daily_limit_cents is null or payout_daily_limit_cents >= 0);
+alter table merchants add column stk_fee_cents bigint check (stk_fee_cents is null or stk_fee_cents >= 0);
+alter table merchants add column b2c_fee_pct int check (b2c_fee_pct is null or (b2c_fee_pct between 0 and 100));
+
+-- Switches that act on the whole platform: pauses and the dashboard announcement.
+create table platform_settings (
+  key text primary key,
+  value jsonb not null,
+  updated_by text references admins(id),
+  updated_at timestamptz not null default now()
+);
+
+-- Internal notes on a merchant, only ever shown in the console.
+create table merchant_notes (
+  id bigint generated always as identity primary key,
+  merchant_id text not null references merchants(id),
+  admin_id text references admins(id),
+  body text not null,
+  created_at timestamptz not null default now()
+);
+create index merchant_notes_merchant on merchant_notes(merchant_id, created_at desc);
+`,
+  },
 ];

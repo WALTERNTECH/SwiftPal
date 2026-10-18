@@ -3,19 +3,27 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
+import { ActivityLog } from "@/components/dash/ActivityLog";
+import { SecuritySettings } from "@/components/dash/SecuritySettings";
+import { TeamSettings } from "@/components/dash/TeamSettings";
 import { Modal, PageHeader, useToast } from "@/components/dash/ui";
-import { api, invalidate, useAccount, type ApiError, type Merchant } from "@/lib/api";
+import { api, can, invalidate, useAccount, type ApiError, type Merchant } from "@/lib/api";
 import { normalisePhone, phoneHint } from "@/lib/format";
 
 const TABS = [
   { v: "profile", t: "Profile" },
+  { v: "security", t: "Security" },
   { v: "business", t: "Business" },
   { v: "team", t: "Team" },
+  { v: "activity", t: "Activity" },
 ] as const;
 type Tab = (typeof TABS)[number]["v"];
 
 export default function Settings() {
+  const me = useAccount();
   const [tab, setTab] = useState<Tab>("profile");
+  // The account-wide log is for the people who run the account.
+  const tabs = TABS.filter((t) => t.v !== "activity" || can(me, "settings"));
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
     if (t && TABS.some((x) => x.v === t)) setTab(t as Tab);
@@ -26,7 +34,7 @@ export default function Settings() {
       <PageHeader title="Settings" />
       <div className="settings-grid">
         <nav className="settings-nav" aria-label="Settings sections">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button key={t.v} aria-current={tab === t.v} onClick={() => setTab(t.v)}>
               {t.t}
             </button>
@@ -34,16 +42,18 @@ export default function Settings() {
         </nav>
         <div className="stack" style={{ gap: 20 }}>
           {tab === "profile" && <VerifyCard />}
-          {tab === "profile" && <Profile />}
+          {tab === "profile" && <Profile onSecurity={() => setTab("security")} />}
+          {tab === "security" && <SecuritySettings />}
           {tab === "business" && <BusinessTab />}
-          {tab === "team" && <Team />}
+          {tab === "team" && <TeamSettings />}
+          {tab === "activity" && <ActivityLog />}
         </div>
       </div>
     </>
   );
 }
 
-function Profile() {
+function Profile({ onSecurity }: { onSecurity: () => void }) {
   const me = useAccount();
   const toast = useToast();
   const [f, setF] = useState({ firstName: me.user.first_name, lastName: me.user.last_name });
@@ -69,7 +79,7 @@ function Profile() {
         {error && <div className="form-error full">{error}</div>}
       </div>
       <div className="modal-foot">
-        <Link href="/forgot-password" className="btn btn-ghost" style={{ marginRight: "auto" }}>Change password</Link>
+        <button className="btn btn-ghost" style={{ marginRight: "auto" }} onClick={onSecurity}>Password and security</button>
         <button
           className="btn btn-pine"
           disabled={busy}
@@ -263,37 +273,5 @@ function VerifyCard() {
       </span>
       <Icon name="chevronRight" size={16} className="dim" />
     </Link>
-  );
-}
-
-function Team() {
-  const me = useAccount();
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <h3>Team</h3>
-        <button className="btn btn-line btn-sm" disabled title="Team invites aren't available yet">
-          <Icon name="plus" size={14} /> Invite
-        </button>
-      </div>
-      <div className="table-wrap">
-        <table className="table">
-          <thead><tr><th>Member</th><th>Role</th><th>Access</th></tr></thead>
-          <tbody>
-            <tr>
-              <td>
-                <b style={{ fontWeight: 500 }}>{me.user.first_name} {me.user.last_name}</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>{me.user.email}</div>
-              </td>
-              <td><span className="badge pine">Owner</span></td>
-              <td className="muted">Everything, including keys and payouts</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div className="panel-body muted" style={{ fontSize: 13, borderTop: "1px solid var(--line)" }}>
-        Roles planned: Developer (keys, webhooks, logs), Finance (payouts, wallet), Support (read-only transactions).
-      </div>
-    </section>
   );
 }

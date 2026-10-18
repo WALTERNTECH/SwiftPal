@@ -3,6 +3,8 @@ import type { App } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { pgliteDb } from "../src/db.js";
 import { createApp } from "../src/index.js";
+import { resetLimits } from "../src/limits.js";
+import { hotp } from "../src/totp.js";
 import { migrate } from "../src/migrate.js";
 import { buildServer } from "../src/server.js";
 
@@ -36,6 +38,8 @@ export const mailCode = (c: Ctx, email: string) => c.mails.filter((m) => m.to ==
 
 /** A signed-in dashboard session (phone and email verified) plus a test API key. */
 export async function merchant(c: Ctx, email = `dev${Math.random().toString(36).slice(2, 8)}@example.co.ke`, phone = `2547${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`) {
+  // Every suite signs up many accounts from one address; rate limits get their own tests.
+  resetLimits();
   const res = await c.api.inject({
     method: "POST",
     url: "/app/auth/signup",
@@ -45,10 +49,13 @@ export async function merchant(c: Ctx, email = `dev${Math.random().toString(36).
   const cookie = String(res.headers["set-cookie"]).split(";")[0];
   const dash = (method: string, url: string, payload?: unknown) =>
     c.api.inject({ method: method as never, url, payload: payload as never, headers: { cookie, "x-requested-with": "SwiftPal" } });
-  const p = await dash("POST", "/app/auth/verify-phone", { code: smsCode(c, phone) });
-  if (p.statusCode !== 200) throw new Error(`verify phone failed ${p.body}`);
-  const v = await dash("POST", "/app/auth/verify-email", { code: mailCode(c, email) });
-  if (v.statusCode !== 200) throw new Error(`verify email failed ${v.body}`);
+  // With codes off the phone and email count as proved at sign-up.
+  if (c.app.cfg.codes) {
+    const p = await dash("POST", "/app/auth/verify-phone", { code: smsCode(c, phone) });
+    if (p.statusCode !== 200) throw new Error(`verify phone failed ${p.body}`);
+    const v = await dash("POST", "/app/auth/verify-email", { code: mailCode(c, email) });
+    if (v.statusCode !== 200) throw new Error(`verify email failed ${v.body}`);
+  }
   // The dashboard has no sandbox; the suite still drives the API through a test key.
   const key = ((await dash("POST", "/app/keys", { name: "suite", mode: "test", scopes: ["payments:write", "payouts:write", "read"] })).json() as { secret: string }).secret;
   const api = (method: string, url: string, payload?: unknown, headers: Record<string, string> = {}) =>
@@ -81,3 +88,18 @@ export function form(fields: Record<string, string>, files: Record<string, { nam
 }
 
 export const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]), Buffer.alloc(200, 1), Buffer.from([0xff, 0xd9])]);
+
+/** Turns on two-step verification for a dashboard session; returns a function that gives a fresh, unused code. */
+export async function enableTwoFactor(c: Ctx, m: { dash: (method: string, url: string, payload?: unknown) => Promise<{ json: () => unknown; statusCode: number; body: string }> }) {
+  const { secret } = (await m.dash("POST", "/app/security/2fa/setup")).json() as { secret: string };
+  const now = () => hotp(secret, Math.floor(Date.now() / 30_000));
+  const on = await m.dash("POST", "/app/security/2fa/enable", { code: now() });
+  if (on.statusCode !== 200) throw new Error(`2fa enable failed ${on.body}`);
+  const { recovery_codes } = on.json() as { recovery_codes: string[] };
+  // A code works once per 30-second step; tests forget the last step instead of waiting for the next.
+  const code = async () => {
+    await c.app.db.query(`update users set totp_last_step = null where totp_enabled_at is not null`);
+    return now();
+  };
+  return { secret, recovery_codes, code };
+}

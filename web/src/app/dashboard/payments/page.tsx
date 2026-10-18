@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useActions } from "@/components/dash/actions";
 import { kes } from "@/components/dash/charts";
-import { downloadCsv, Empty, PageHeader, PayBadge, useToast } from "@/components/dash/ui";
-import { api, useApi, useMode, usePaged, type Analytics, type Payment } from "@/lib/api";
+import { ExportButton } from "@/components/dash/ExportButton";
+import { Empty, PageHeader, PayBadge } from "@/components/dash/ui";
+import { can, useAccount, useApi, useMode, usePaged, type Analytics, type Payment } from "@/lib/api";
 import { dateTime, fee, maskPhone, money } from "@/lib/format";
 
 type Filter = "all" | "succeeded" | "pending" | "unpaid";
@@ -20,13 +21,12 @@ const PAGE = 15;
 const initials = (phone: string) => phone.slice(-2);
 
 export default function Payments() {
+  const me = useAccount();
   const mode = useMode();
-  const toast = useToast();
   const { open, showPayment } = useActions();
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
   const [needle, setNeedle] = useState("");
-  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setNeedle(q.trim()), 250);
@@ -43,21 +43,6 @@ export default function Payments() {
   const shown = list.rows;
   const from = list.page * PAGE;
 
-  async function exportCsv() {
-    setExporting(true);
-    try {
-      const all = await api<Payment[]>(`/app/payments?${params}&limit=200`);
-      downloadCsv(`swiftpal-payments-${mode}.csv`, [
-        ["id", "created_at", "status", "amount", "phone", "reference", "mpesa_receipt", "fee_charged", "channel"],
-        ...all.map((p) => [p.id, p.created_at, p.status, p.amount, p.phone, p.reference, p.mpesa_receipt, p.fee.charged ? p.fee.amount : 0, p.channel]),
-      ]);
-      if (all.length === 200) toast("Exported the latest 200 payments");
-    } catch (err) {
-      toast((err as Error).message, "alert");
-    }
-    setExporting(false);
-  }
-
   return (
     <>
       <PageHeader
@@ -65,12 +50,12 @@ export default function Payments() {
         sub="STK Push collections"
         actions={
           <>
-            <button className="btn btn-line" disabled={!shown.length || exporting} onClick={exportCsv}>
-              {exporting ? <span className="spinner" /> : <Icon name="download" size={15} />} Export
-            </button>
-            <button className="btn btn-pine" onClick={() => open("payment")}>
-              <Icon name="plus" size={15} /> Request payment
-            </button>
+            <ExportButton kind="payments" />
+            {can(me, "collect") && (
+              <button className="btn btn-pine" onClick={() => open("payment")}>
+                <Icon name="plus" size={15} /> Request payment
+              </button>
+            )}
           </>
         }
       />

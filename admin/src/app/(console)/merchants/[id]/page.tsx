@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { AdjustModal, ResolveModal } from "@/components/money";
 import { Empty, KV, Modal, PageHeader, useToast } from "@/components/ui";
@@ -20,9 +20,15 @@ type Detail = {
   payouts: Payout[];
   ledger: { id: string; account: string; kind: string; amount: number; ref: string | null; created_at: string }[];
   audit: AuditRow[];
+  people: { id: string; email: string; phone: string; first_name: string; last_name: string; role: string; two_factor: boolean; disabled_at: string | null; last_active_at: string | null; sessions: number }[];
+  activity: { kind: string; detail: Record<string, unknown>; ip: string | null; created_at: string; email: string | null }[];
+  links: { id: string; url: string; title: string; amount: number | null; active: boolean; paid: number; created_at: string }[];
+  notes: { id: number; body: string; created_at: string; admin_name: string | null }[];
+  terms: { payout_daily_limit: number | null; default_payout_daily_limit: number; sent_today: number; stk_fee: number | null; b2c_fee_pct: number | null };
 };
 
-const TABS = ["Payments", "Payouts", "Ledger", "API keys", "Audit"] as const;
+const TABS = ["Payments", "Payouts", "Ledger", "People", "Security", "Links", "API keys", "Audit"] as const;
+const ROLE: Record<string, string> = { owner: "Owner", admin: "Admin", developer: "Developer", finance: "Finance", support: "Support" };
 
 export default function MerchantPage() {
   const { id } = useParams<{ id: string }>();
@@ -32,6 +38,8 @@ export default function MerchantPage() {
   const [adjusting, setAdjusting] = useState(false);
   const [resolving, setResolving] = useState<{ kind: "payment" | "payout"; item: Payment | Payout } | null>(null);
   const [suspending, setSuspending] = useState(false);
+  const [terms, setTerms] = useState(false);
+  const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -89,6 +97,9 @@ export default function MerchantPage() {
                 Suspend
               </button>
             )}
+            <button className="btn btn-line" onClick={() => setTerms(true)}>
+              Limits and pricing
+            </button>
             <button className="btn btn-pine" onClick={() => setAdjusting(true)}>
               Adjust balance
             </button>
@@ -120,6 +131,18 @@ export default function MerchantPage() {
           <span>Live</span>
           <b>{m.live_enabled ? "On" : "Off"}</b>
           <em>Auto-cover {m.auto_cover ? "on" : "off"}</em>
+        </div>
+        <div className="card-stat">
+          <span>Daily payout limit {d.terms.payout_daily_limit === null && <span className="dim">· default</span>}</span>
+          <b>{money(d.terms.payout_daily_limit ?? d.terms.default_payout_daily_limit)}</b>
+          <em>{money(d.terms.sent_today)} sent today</em>
+        </div>
+        <div className="card-stat">
+          <span>Pricing</span>
+          <b>{d.terms.stk_fee === null && d.terms.b2c_fee_pct === null ? "Standard" : "Custom"}</b>
+          <em>
+            STK {d.terms.stk_fee === null ? "KES 2.50" : money2(d.terms.stk_fee)} · B2C {d.terms.b2c_fee_pct === null ? "standard" : `${d.terms.b2c_fee_pct}%`}
+          </em>
         </div>
       </div>
 
@@ -157,6 +180,24 @@ export default function MerchantPage() {
           )}
         </section>
       </div>
+
+      <section className="panel">
+        <div className="panel-head"><h3>Internal notes</h3><span className="muted" style={{ fontSize: 12.5 }}>Only admins see these</span></div>
+        <div className="panel-body stack" style={{ gap: 10 }}>
+          <div className="row" style={{ gap: 8, alignItems: "flex-start" }}>
+            <textarea className="textarea grow" rows={2} placeholder="Called about a missing top-up. Confirmed receipt TJG4K2XQ8P with Safaricom." value={note} onChange={(e) => setNote(e.target.value)} />
+            <button className="btn btn-line" disabled={busy || note.trim().length < 2} onClick={() => act(`/merchants/${id}/notes`, { body: note.trim() }, "Note added").then(() => setNote(""))}>
+              Add note
+            </button>
+          </div>
+          {d.notes.map((n) => (
+            <div key={n.id} className="note-row">
+              <p>{n.body}</p>
+              <span className="muted">{n.admin_name ?? "Admin"} · {dateTime(n.created_at)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <section className="panel">
         <div className="toolbar">
@@ -247,6 +288,99 @@ export default function MerchantPage() {
             <Empty icon="receipt" title="No ledger entries" body="" />
           ))}
 
+        {tab === "People" && (
+          <>
+            <div className="table-wrap">
+              <table className="table">
+                <thead><tr><th>Person</th><th>Role</th><th>Two-step</th><th>Last active</th><th>Sessions</th><th /></tr></thead>
+                <tbody>
+                  {d.people.map((u) => (
+                    <tr key={u.id}>
+                      <td>
+                        <b style={{ fontWeight: 500 }}>{u.first_name} {u.last_name}</b>
+                        <div className="dim" style={{ fontSize: 12 }}>{u.email} · <span className="mono">{u.phone}</span></div>
+                      </td>
+                      <td>{u.disabled_at ? <span className="badge">Removed</span> : <span className={`badge ${u.role === "owner" ? "pine" : ""}`}>{ROLE[u.role] ?? u.role}</span>}</td>
+                      <td>{u.two_factor ? <span className="badge ok">On</span> : <span className="badge warn">Off</span>}</td>
+                      <td className="muted">{u.last_active_at ? timeAgo(u.last_active_at) : "—"}</td>
+                      <td className="num">{u.sessions}</td>
+                      <td className="right">
+                        {u.two_factor && !u.disabled_at && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            disabled={busy}
+                            onClick={() =>
+                              confirm(`Reset two-step verification for ${u.first_name}? Only do this after confirming who they are by phone or video. They're signed out and set it up again.`) &&
+                              act(`/merchants/${id}/users/${u.id}/reset-2fa`, {}, "Two-step verification reset")
+                            }
+                          >
+                            Reset 2FA
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="toolbar" style={{ borderTop: "1px solid var(--line)", borderBottom: 0 }}>
+              <span className="muted grow" style={{ fontSize: 13 }}>Suspect a takeover? Sign everyone out; they need their password (and two-step code) again.</span>
+              <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => confirm(`Sign out everyone on ${m.name}?`) && act(`/merchants/${id}/sign-out`, {}, "Everyone signed out")}>
+                Sign out everywhere
+              </button>
+            </div>
+          </>
+        )}
+
+        {tab === "Security" &&
+          (d.activity.length ? (
+            <div className="table-wrap">
+              <table className="table">
+                <thead><tr><th>When</th><th>Who</th><th>What</th><th>From</th><th>Details</th></tr></thead>
+                <tbody>
+                  {d.activity.map((a, i) => (
+                    <tr key={i}>
+                      <td className="muted">{dateTime(a.created_at)}</td>
+                      <td>{a.email ?? <span className="dim">SwiftPal</span>}</td>
+                      <td>
+                        <span className={`badge ${/failed|disabled|removed|reset/.test(a.kind) ? "bad" : /password|phone|withdrawal|connect/.test(a.kind) ? "warn" : ""}`}>{a.kind.replace(/_/g, " ")}</span>
+                      </td>
+                      <td className="mono muted">{a.ip ?? ""}</td>
+                      <td className="json">{Object.keys(a.detail ?? {}).length ? JSON.stringify(a.detail) : ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty icon="shield" title="No security activity" body="" />
+          ))}
+
+        {tab === "Links" &&
+          (d.links.length ? (
+            <div className="table-wrap">
+              <table className="table">
+                <thead><tr><th>Link</th><th className="right">Price</th><th className="right">Paid</th><th>Status</th><th>Created</th></tr></thead>
+                <tbody>
+                  {d.links.map((l) => (
+                    <tr key={l.id}>
+                      <td>
+                        {l.title}
+                        <div className="dim mono" style={{ fontSize: 11.5 }}>{l.url}</div>
+                      </td>
+                      <td className="right num">{l.amount === null ? <span className="muted">Any</span> : money(l.amount)}</td>
+                      <td className="right num">{l.paid}</td>
+                      <td>{l.active ? <span className="badge ok">On</span> : <span className="badge">Off</span>}</td>
+                      <td className="muted">{timeAgo(l.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty icon="link" title="No payment links" body="" />
+          ))}
+
         {tab === "API keys" &&
           (d.keys.length ? (
             <div className="table-wrap">
@@ -296,6 +430,7 @@ export default function MerchantPage() {
       </section>
 
       <AdjustModal merchantId={id} open={adjusting} onClose={() => setAdjusting(false)} />
+      <TermsModal merchantId={id} open={terms} onClose={() => setTerms(false)} current={d.terms} />
       <ResolveModal kind={resolving?.kind ?? "payment"} item={resolving?.item ?? null} onClose={() => setResolving(null)} />
       <Modal
         open={suspending}
@@ -317,5 +452,80 @@ export default function MerchantPage() {
         </div>
       </Modal>
     </>
+  );
+}
+
+/** Risk limits and negotiated prices. Empty fields go back to the platform defaults. */
+function TermsModal({ merchantId, open, onClose, current }: { merchantId: string; open: boolean; onClose: () => void; current: Detail["terms"] }) {
+  const toast = useToast();
+  const [f, setF] = useState({ limit: "", stk: "", pct: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (open) {
+      setF({ limit: current.payout_daily_limit === null ? "" : String(current.payout_daily_limit), stk: current.stk_fee === null ? "" : String(current.stk_fee), pct: current.b2c_fee_pct === null ? "" : String(current.b2c_fee_pct) });
+      setError("");
+    }
+  }, [open, current]);
+  const num = (v: string) => (v.trim() === "" ? null : Number(v));
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Limits and pricing"
+      footer={
+        <>
+          <button className="btn btn-line" onClick={onClose}>Cancel</button>
+          <button
+            className="btn btn-pine"
+            disabled={busy}
+            onClick={async () => {
+              const body = { payout_daily_limit: num(f.limit), stk_fee: num(f.stk), b2c_fee_pct: num(f.pct) };
+              if (Object.values(body).some((v) => v !== null && (!Number.isFinite(v) || v < 0))) return setError("Use positive numbers, or leave a field empty for the default.");
+              setBusy(true);
+              setError("");
+              try {
+                await api(`/merchants/${merchantId}/terms`, { method: "PATCH", body });
+                await invalidate(`/merchants/${merchantId}`, "/audit");
+                toast("Saved. It applies to their next request.");
+                onClose();
+              } catch (e) {
+                setError((e as ApiError).message);
+              }
+              setBusy(false);
+            }}
+          >
+            {busy ? <span className="spinner" /> : "Save"}
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label className="label" htmlFor="t-limit">Daily payout limit</label>
+        <div className="input-group">
+          <span className="prefix">KES</span>
+          <input id="t-limit" className="input mono" inputMode="numeric" placeholder={`${current.default_payout_daily_limit.toLocaleString()} (default)`} value={f.limit} onChange={(e) => setF({ ...f, limit: e.target.value.replace(/[^0-9]/g, "") })} />
+        </div>
+        <span className="hint">Live payouts, refunds and withdrawals per Nairobi day. 0 stops money leaving entirely.</span>
+      </div>
+      <div className="form-grid">
+        <div className="field">
+          <label className="label" htmlFor="t-stk">STK Push fee</label>
+          <div className="input-group">
+            <span className="prefix">KES</span>
+            <input id="t-stk" className="input mono" inputMode="decimal" placeholder="2.50 (standard)" value={f.stk} onChange={(e) => setF({ ...f, stk: e.target.value.replace(/[^0-9.]/g, "") })} />
+          </div>
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="t-pct">B2C fee, % of standard</label>
+          <div className="input-group">
+            <input id="t-pct" className="input mono" inputMode="numeric" placeholder="100 (standard)" value={f.pct} onChange={(e) => setF({ ...f, pct: e.target.value.replace(/[^0-9]/g, "").slice(0, 3) })} />
+            <span className="prefix">%</span>
+          </div>
+        </div>
+      </div>
+      <p className="hint">Every change goes on the audit log with the old and new values.</p>
+      {error && <div className="form-error">{error}</div>}
+    </Modal>
   );
 }

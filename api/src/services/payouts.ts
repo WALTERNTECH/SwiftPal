@@ -1,9 +1,11 @@
 import { driverFor, type Account, type App, type Mode } from "../app.js";
-import { one, type Q } from "../db.js";
+import { NAIROBI_TODAY, one, type Q } from "../db.js";
 import { ApiError, kes, newId } from "../lib.js";
 import { MpesaRejected, type B2cRequest, type B2cResult } from "../mpesa/types.js";
-import { b2cFeeCents } from "../pricing.js";
+import { b2cFeeFor } from "../pricing.js";
 import { assertActive, type Merchant } from "./accounts.js";
+import type { Payment } from "./payments.js";
+import { assertPayoutsOpen } from "./platform.js";
 import { emit } from "./events.js";
 import { capture, feeSource, hold, lock, release } from "./wallet.js";
 import { lowBalanceCheck } from "./payments.js";
@@ -28,6 +30,7 @@ export type Payout = {
   failure_code: string | null;
   failure_message: string | null;
   metadata: Record<string, unknown>;
+  refund_of: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -47,6 +50,7 @@ export const presentPayout = (p: Payout) => ({
   reference: p.reference,
   reason: p.reason,
   batch: p.batch_id,
+  refund_of: p.refund_of ?? null,
   mpesa_receipt: p.mpesa_receipt,
   failure_code: p.failure_code,
   failure_message: p.failure_message,
@@ -59,18 +63,40 @@ export const presentPayout = (p: Payout) => ({
 
 export type PayoutInput = { phone: string; amount: number; reference: string; reason: string; metadata?: Record<string, unknown> };
 
-function guard(merchant: Merchant, mode: Mode, purpose: Payout["purpose"]) {
+async function guard(app: App, merchant: Merchant, mode: Mode, purpose: Payout["purpose"]) {
   assertActive(merchant);
+  if (mode === "live") await assertPayoutsOpen(app);
   if (mode === "live" && purpose === "payout" && merchant.verification_status !== "approved")
     throw new ApiError(403, "payouts_not_enabled", "B2C needs a verified account. Complete Verification in the dashboard.", "permission_error");
 }
 
+/** Live money a merchant may send per Nairobi day: theirs if the console set one, else the platform's. */
+const dailyLimit = (app: App, merchant: Merchant, mode: Mode) => (mode === "live" ? Number(merchant.payout_daily_limit_cents ?? app.cfg.payoutDailyLimitCents) : null);
+
 /** Reserves amount and fee for one payout inside an open transaction. */
-async function reserve(q: Q, merchant: Merchant, mode: Mode, input: PayoutInput, purpose: Payout["purpose"], batchId: string | null) {
-  const fee = b2cFeeCents(input.amount);
+async function reserve(q: Q, merchant: Merchant, mode: Mode, input: PayoutInput, purpose: Payout["purpose"], batchId: string | null, limitCents: number | null) {
+  const fee = b2cFeeFor(merchant, input.amount);
   if (fee === null || !Number.isInteger(input.amount)) throw new ApiError(400, "invalid_amount", "Payouts run from KES 10 to KES 250,000 in whole shillings.");
   const cents = input.amount * 100;
   const b = await lock(q, merchant.id, mode);
+  // The balance lock above serialises this merchant's payouts, so the day's total can't race.
+  if (limitCents !== null) {
+    const day = await one<{ sent: number }>(
+      q,
+      `select coalesce(sum(amount), 0) as sent from payouts where merchant_id = $1 and mode = 'live' and status not in ('failed','reversed')
+       and created_at >= ${NAIROBI_TODAY}`,
+      [merchant.id],
+    );
+    const sent = Number(day?.sent ?? 0);
+    if ((sent + input.amount) * 100 > limitCents)
+      throw new ApiError(
+        403,
+        "daily_limit_reached",
+        `This passes your daily payout limit of KES ${kes(limitCents).toLocaleString()} (KES ${sent.toLocaleString()} sent today). It resets at midnight; contact support to raise it.`,
+        "permission_error",
+        { limit: kes(limitCents), sent_today: sent },
+      );
+  }
   if (b.float.available < cents) throw new ApiError(409, "insufficient_float", `Payout float is KES ${kes(b.float.available).toLocaleString()} and this payout needs KES ${input.amount.toLocaleString()}.`, "balance_error");
   const feeAccount = feeSource(b, fee, merchant.auto_cover, cents);
   await hold(q, merchant.id, mode, "float", cents);
@@ -86,9 +112,9 @@ async function reserve(q: Q, merchant: Merchant, mode: Mode, input: PayoutInput,
 }
 
 export async function createPayout(app: App, merchant: Merchant, mode: Mode, input: PayoutInput, purpose: Payout["purpose"] = "payout") {
-  guard(merchant, mode, purpose);
+  await guard(app, merchant, mode, purpose);
   if (!driverFor(app, mode)) throw new ApiError(503, "live_not_configured", "Live M-Pesa is not configured on this server yet.", "api_error");
-  const id = await app.db.tx((q) => reserve(q, merchant, mode, input, purpose, null));
+  const id = await app.db.tx((q) => reserve(q, merchant, mode, input, purpose, null, dailyLimit(app, merchant, mode)));
   await dispatch(app, id);
   return (await one<Payout>(app.db, `select * from payouts where id = $1`, [id]))!;
 }
@@ -99,15 +125,16 @@ export async function createPayout(app: App, merchant: Merchant, mode: Mode, inp
  * sent by the worker at a steady pace.
  */
 export async function createBatch(app: App, merchant: Merchant, mode: Mode, reference: string | null, items: PayoutInput[]) {
-  guard(merchant, mode, "payout");
+  await guard(app, merchant, mode, "payout");
   if (!items.length || items.length > 1000) throw new ApiError(400, "invalid_batch", "A batch holds 1 to 1,000 payouts.");
+  const limitCents = dailyLimit(app, merchant, mode);
   const batchId = newId("bat");
   const total = items.reduce((a, i) => a + i.amount, 0);
   await app.db.tx(async (q) => {
     await q.query(`insert into payout_batches (id, merchant_id, mode, reference, count, total) values ($1,$2,$3,$4,$5,$6)`, [batchId, merchant.id, mode, reference, items.length, total]);
     for (const [i, item] of items.entries()) {
       try {
-        await reserve(q, merchant, mode, item, "payout", batchId);
+        await reserve(q, merchant, mode, item, "payout", batchId, limitCents);
       } catch (e) {
         if (e instanceof ApiError) throw new ApiError(e.status, e.code, `Item ${i + 1}: ${e.message} Nothing was sent.`, e.type, { index: i });
         throw e;
@@ -115,6 +142,45 @@ export async function createBatch(app: App, merchant: Merchant, mode: Mode, refe
     }
   });
   return { id: batchId, object: "payout_batch", reference, count: items.length, total, livemode: mode === "live" };
+}
+
+/**
+ * Sends money back to the phone that paid, as a B2C payout from the float.
+ * Partial refunds add up to at most the payment; the payment row is locked so
+ * two refunds can't both pass that check.
+ */
+export async function refundPayment(app: App, merchant: Merchant, mode: Mode, paymentId: string, amount?: number) {
+  await guard(app, merchant, mode, "payout");
+  if (!driverFor(app, mode)) throw new ApiError(503, "live_not_configured", "Live M-Pesa is not configured on this server yet.", "api_error");
+  const id = await app.db.tx(async (q) => {
+    const p = await one<Payment>(q, `select * from payments where id = $1 and merchant_id = $2 and mode = $3 and purpose = 'charge' for update`, [paymentId, merchant.id, mode]);
+    if (!p) throw new ApiError(404, "not_found", "No such payment.", "not_found");
+    if (p.status !== "succeeded") throw new ApiError(409, "not_refundable", "Only successful payments can be refunded.");
+    const done = await one<{ refunded: number }>(q, `select coalesce(sum(amount), 0) as refunded from payouts where refund_of = $1 and status not in ('failed','reversed')`, [p.id]);
+    const left = Number(p.amount) - Number(done?.refunded ?? 0);
+    const want = amount ?? left;
+    if (!Number.isInteger(want) || want < 1) throw new ApiError(400, "invalid_amount", "Refund a whole number of shillings.");
+    if (want > left) throw new ApiError(409, "refund_exceeds_payment", left > 0 ? `Only KES ${left.toLocaleString()} of this payment is left to refund.` : "This payment is already fully refunded.");
+    if (want < 10) throw new ApiError(400, "invalid_amount", "M-Pesa sends refunds from KES 10.");
+    const payoutId = await reserve(
+      q,
+      merchant,
+      mode,
+      { phone: p.phone, amount: want, reference: `RF-${p.reference}`.slice(0, 32), reason: "refund", metadata: { payment: p.id, mpesa_receipt: p.mpesa_receipt } },
+      "payout",
+      null,
+      dailyLimit(app, merchant, mode),
+    );
+    await q.query(`update payouts set refund_of = $2 where id = $1`, [payoutId, p.id]);
+    return payoutId;
+  });
+  await dispatch(app, id);
+  return (await one<Payout>(app.db, `select * from payouts where id = $1`, [id]))!;
+}
+
+export async function refundsOf(app: App, merchantId: string, paymentId: string) {
+  const { rows } = await app.db.query<Payout>(`select * from payouts where merchant_id = $1 and refund_of = $2 order by created_at`, [merchantId, paymentId]);
+  return rows.map(presentPayout);
 }
 
 function commandFor(reason: string): B2cRequest["commandId"] {
